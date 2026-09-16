@@ -10,18 +10,18 @@ logging.basicConfig(
 
 # LIVE ARC TESTNET RPC ENDPOINTS
 RPC_ENDPOINTS = [
-    "https://rpc.testnet.arc.network",
-    "https://arc-testnet.drpc.org"
+    "https://arc.network",
+    "https://drpc.org"
 ]
 
 # State tracking
 rpc_status = {url: {"failures": 0, "circuit_broken_until": 0} for url in RPC_ENDPOINTS}
 
 # Configuration - Server ko handle karne ke rules
-FAILURE_THRESHOLD = 5       # Failures limit barha di taake slow net par foran block na ho
+FAILURE_THRESHOLD = 5       # 5 baar continuous dead hone par hi action hoga
 COOLDOWN_SECONDS = 20       
 MAX_DRIFT_THRESHOLD = 50    
-SLOW_TIMEOUT = 15           # Server ko response dene ke liye 15 seconds ka zyada waqt diya
+SUPER_PATIENT_TIMEOUT = 30  # Aapke kehne par 30 seconds ka maximum waqt diya taake har haal mein health dhoond sake
 
 def check_rpc_with_circuit_breaker(url):
     current_time = time.time()
@@ -29,18 +29,18 @@ def check_rpc_with_circuit_breaker(url):
     if current_time < rpc_status[url]["circuit_broken_until"]:
         return None
 
-    # Screen par bura 'Failed' message dikhane ke bajaye calm update dikhein
-    logging.info(f"🔄 Connecting to {url} (Allowing extra time if network is slow)...")
+    # Screen par positive message dikhein ke agent dhoond raha hai
+    logging.info(f"🔄 Searching for network health from {url} (Waiting up to 30s if slow)...")
 
     try:
-        # Step 1: Cheap probe with high timeout to handle slowness
+        # Step 1: Cheap probe with maximum patience (30 seconds)
         payload_id = {"jsonrpc": "2.0", "method": "eth_chainId", "params": [], "id": 1}
-        response = requests.post(url, json=payload_id, timeout=SLOW_TIMEOUT)
+        response = requests.post(url, json=payload_id, timeout=SUPER_PATIENT_TIMEOUT)
         
         if response.status_code == 200 and "result" in response.json():
             # Step 2: Sahi data fetch karna
             payload_block = {"jsonrpc": "2.0", "method": "eth_getBlockByNumber", "params": ["latest", False], "id": 2}
-            block_resp = requests.post(url, json=payload_block, timeout=SLOW_TIMEOUT).json()
+            block_resp = requests.post(url, json=payload_block, timeout=SUPER_PATIENT_TIMEOUT).json()
             
             rpc_status[url]["failures"] = 0  # Success par failure counter zero
             
@@ -52,8 +52,8 @@ def check_rpc_with_circuit_breaker(url):
                 }
         
     except requests.exceptions.Timeout:
-        # Agar network slow hai toh failed bolne ke bajaye yeh batayein
-        logging.warning(f"⚠️ {url} response is slow today, retrying in next loop...")
+        # Agar network nihayat slow hai tab bhi calm rhen
+        logging.warning(f"⚠️ {url} taking too long, but agent is still trying to catch data...")
     except Exception as e:
         pass
 
@@ -62,12 +62,12 @@ def check_rpc_with_circuit_breaker(url):
     
     if rpc_status[url]["failures"] >= FAILURE_THRESHOLD:
         rpc_status[url]["circuit_broken_until"] = current_time + COOLDOWN_SECONDS
-        logging.critical(f"🚨 Circuit Tripped! {url} is completely down. Paused for {COOLDOWN_SECONDS}s.")
+        logging.critical(f"🚨 Circuit Tripped! {url} is completely down/dead. Paused for {COOLDOWN_SECONDS}s.")
     
     return None
 
 def monitor_network():
-    logging.info("🚀 Arc Network Smart Monitoring Agent Started...")
+    logging.info("🚀 Arc Network Smart Patient Monitoring Agent Started...")
     
     while True:
         latest_data = {}
@@ -76,7 +76,6 @@ def monitor_network():
             data = check_rpc_with_circuit_breaker(url)
             if data:
                 latest_data[url] = data
-                # Sahi data milne par screen par pyara aur theek status dikhayein
                 logging.info(f"✅ {url} | Block Height: {data['height']} | Status: Healthy")
         
         if len(latest_data) >= 2:
