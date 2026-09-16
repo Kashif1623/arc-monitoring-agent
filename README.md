@@ -15,7 +15,8 @@ You can easily run this agent on your local machine, server, or mobile phone (vi
 
 1. **Clone the Repository:**
 ```bash
-git clone https://github.com
+git clone https://github.com/Kashif1623/arc-monitoring-agent.git
+
 ```
 
 2. **Navigate to the Folder:**
