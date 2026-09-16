@@ -14,14 +14,16 @@ An intelligent, production-grade automated Python agent tailored for the **Arc N
 You can easily run this agent on your local machine, server, or mobile phone (via Pydroid 3):
 
 1. **Clone the Repository:**
-   ```bash
-   git clone https://github.com
-   ```
+```bash
+git clone https://github.com
+```
+
 2. **Navigate to the Folder:**
-   ```bash
-   cd arc-monitoring-agent
-   ```
+```bash
+cd arc-monitoring-agent
+```
+
 3. **Run the Smart Agent:**
-   ```bash
-   python agent.py
-   ```
+```bash
+python agent.py
+```
