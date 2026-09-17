@@ -1,4 +1,4 @@
-     import asyncio
+import asyncio
 import time
 import logging
 import aiohttp
@@ -11,16 +11,16 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-# 🌐 REAL & ACTIVE ARC TESTNET ENDPOINTS (Auto-Configured)
+# 🌐 REAL & ACTIVE ARC TESTNET ENDPOINTS
 RPC_ENDPOINTS = [
     "https://arc.io",
     "https://drpc.org"
 ]
 
-# Local persistent log storage path config
+# Local persistent log storage path configuration
 LOG_STORAGE_FILE = "agent_history_logs.txt"
 
-# Stateful tracking network matrix
+# Stateful network tracking matrix
 rpc_status = {url: {"failures": 0, "circuit_broken_until": 0} for url in RPC_ENDPOINTS}
 
 # Global Operational Rules for 24/7 Automation
@@ -47,15 +47,18 @@ def print_embedded_deployment_guides():
     """Prints production-grade deployment scripts directly inside the interface."""
     print("=" * 85)
     print("📱 [BATTERY SAVER ACTIVATED] TERMUX 15-MINUTE BACKGROUND RUNNER:")
-    print("  Run this exact command so it keeps running even if your phone is locked.")
-    print("  It will AUTOMATICALLY KILL ITSELF after exactly 15 minutes to save battery!")
+    print("  Run this exact command to maintain execution state when the device locks:")
     print(f"  --> termux-wake-lock && nohup python agent.py >> {LOG_STORAGE_FILE} 2>&1 &")
-    print(f"\n  * Note: To view accumulative logs history later, type: cat {LOG_STORAGE_FILE}")
+    print(f"\n  * Note: To view accumulative logs history later, execute: cat {LOG_STORAGE_FILE}")
+    print("=" * 85)
+    print("💻 [DEPLOYMENT GUIDE] TO RUN SILENTLY ON WINDOWS BACKGROUND:")
+    print("  To execute without displaying the command console, rename this file to 'agent.pyw'")
+    print("  and invoke it via Windows Task Scheduler utilizing: pythonw agent.pyw")
     print("=" * 85 + "\n")
 
 async def send_discord_alert(session, alert_title, details):
     """Sends asynchronous emergency notifications straight to Discord mobile."""
-    # 🔴 Optional: Agar mobile par notification chahiye toh link yahan paste karein
+    # 🔴 Optional: Insert your valid Discord Webhook URL within the quotes below
     DISCORD_WEBHOOK_URL = "YOUR_DISCORD_WEBHOOK_URL_HERE"
     
     if DISCORD_WEBHOOK_URL == "YOUR_DISCORD_WEBHOOK_URL_HERE":
@@ -187,4 +190,3 @@ if __name__ == "__main__":
         asyncio.run(monitor_network())
     except KeyboardInterrupt:
         logging.info("🛑 Monitor agent safely stopped via terminal control.")
-    
