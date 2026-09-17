@@ -10,18 +10,27 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-# 🌐 REAL & ACTIVE ARC MAINNET HIGH-PERFORMANCE ENDPOINTS
-RPC_ENDPOINTS = [
+# 🌐 PRIMARY HIGH-PERFORMANCE ENDPOINTS
+PRIMARY_RPC_ENDPOINTS = [
     "https://arc.io",
     "https://drpc.org"  
+]
+
+# 🔄 DYNAMIC FALLBACK BACKUP POOL (Activated if primary crashes)
+FALLBACK_RPC_ENDPOINTS = [
+    "https://rpc.main-1.archiechain.io",  # Fallback Router 1
+    "https://rpc.testnet.arc.network"      # Fallback Router 2 (Backup node reference)
 ]
 
 # Local persistent log storage path configuration
 LOG_STORAGE_FILE = "mainnet_agent_history_logs.txt"
 MAX_LOG_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB Auto-Rotation limit for mobile safety
 
-# Stateful network tracking matrix
-rpc_status = {url: {"failures": 0, "circuit_broken_until": 0} for url in RPC_ENDPOINTS}
+# Master State Pool for tracking active URLs dynamically
+ACTIVE_RPC_POOL = list(PRIMARY_RPC_ENDPOINTS)
+
+# Stateful network tracking matrix for Circuit Breaker
+rpc_status = {url: {"failures": 0, "circuit_broken_until": 0} for url in (PRIMARY_RPC_ENDPOINTS + FALLBACK_RPC_ENDPOINTS)}
 
 # Global Operational Rules for 24/7 Non-Stop Automation
 FAILURE_THRESHOLD = 3       
@@ -116,7 +125,7 @@ async def check_rpc_with_circuit_breaker(session, url):
                             "gas_usdc": round(gas_price_gwei, 2)
                         }
     except asyncio.TimeoutError:
-        msg = f"⚠️ Latency Timeout: Mainnet Node {url} responded slower than {SUPER_PATIENT_TIMEOUT}s."
+        msg = f"⚠️ Latency Timeout: Node {url} responded slower than {SUPER_PATIENT_TIMEOUT}s."
         logging.warning(msg)
         write_persistent_log(msg)
     except Exception:
@@ -125,15 +134,16 @@ async def check_rpc_with_circuit_breaker(session, url):
     rpc_status[url]["failures"] += 1
     if rpc_status[url]["failures"] >= FAILURE_THRESHOLD:
         rpc_status[url]["circuit_broken_until"] = current_time + COOLDOWN_SECONDS
-        err_msg = f"🚨 Circuit Tripped! Mainnet Node {url} is down. Cooldown for {COOLDOWN_SECONDS}s."
+        err_msg = f"🚨 Circuit Tripped! Node {url} is down. Cooldown for {COOLDOWN_SECONDS}s."
         logging.critical(err_msg)
         write_persistent_log(err_msg)
-        await send_discord_alert(session, "NODE_CRASH_ALERT", f"🔴 **Mainnet Node Down:** {url}\nFailed {FAILURE_THRESHOLD} consecutive times.")
+        await send_discord_alert(session, "NODE_CRASH_ALERT", f"🔴 **Node Down:** {url}\nFailed {FAILURE_THRESHOLD} consecutive times.")
     return None
 
 async def monitor_network():
+    global ACTIVE_RPC_POOL
     print_embedded_deployment_guides()
-    init_msg = "🚀 Autonomous Arc Mainnet Monitor Agent successfully deployed (24/7 Infinite Non-Stop Active)."
+    init_msg = "🚀 Autonomous Arc Mainnet Monitor Agent successfully deployed with Fallback Fall-back Matrix (24/7 Engine)."
     logging.info(init_msg + "\n")
     write_persistent_log(init_msg)
     
@@ -142,15 +152,26 @@ async def monitor_network():
     async with aiohttp.ClientSession(connector=connector) as session:
         while True:
             try:
-                tasks = [check_rpc_with_circuit_breaker(session, url) for url in RPC_ENDPOINTS]
+                # Execution Pool Execution Mapping
+                tasks = [check_rpc_with_circuit_breaker(session, url) for url in ACTIVE_RPC_POOL]
                 results = await asyncio.gather(*tasks)
                 
                 latest_data = {res["url"]: res for res in results if res is not None}
                 
+                # 🛠️ FALLBACK TRIGGER ENGINE ACTIVATION
                 if not latest_data:
-                    msg = "⚠️ Searching for active Mainnet health metrics... Retrying in 10s."
+                    fallback_warning = "⚠️ Primary Nodes Failed! Activating Fallback Router Subsystem..."
+                    logging.warning(fallback_warning)
+                    write_persistent_log(fallback_warning)
+                    
+                    # Merge Fallback endpoints dynamically into operational queue
+                    ACTIVE_RPC_POOL = list(PRIMARY_RPC_ENDPOINTS + FALLBACK_RPC_ENDPOINTS)
+                    
+                    msg = "🔄 Retrying connection using extended network matrices in 10s."
                     logging.warning(msg)
                     write_persistent_log(msg)
+                    await asyncio.sleep(10)
+                    continue
                 
                 for url, data in latest_data.items():
                     success_msg = f"✅ [Healthy] {url} | Block: {data['height']} | USDC Gas: {data['gas_usdc']} Gwei"
@@ -159,7 +180,7 @@ async def monitor_network():
                     
                     # Gas Price Alert Check
                     if data['gas_usdc'] > GAS_ALERT_THRESHOLD_GWEI:
-                        gas_alert_msg = f"🔥 HIGH GAS FEES ALERT: Arc Network USDC Gas is at {data['gas_usdc']} Gwei!"
+                        gas_alert_msg = f"🔥 HIGH GAS FEES ALERT: Network USDC Gas is at {data['gas_usdc']} Gwei!"
                         logging.warning(f"  {gas_alert_msg}")
                         write_persistent_log(gas_alert_msg)
                         await send_discord_alert(session, "HIGH_GAS_ALERT", f"💵 **Arc USDC Gas Spike:** {data['gas_usdc']} Gwei\nNode: {url}")
@@ -171,10 +192,10 @@ async def monitor_network():
                     for url, info in latest_data.items():
                         node_drift = max_height - info["height"]
                         if node_drift >= MAX_DRIFT_THRESHOLD:
-                            drift_msg = f"⚠️ DRIFT WARNING: Mainnet Node {url} lagging behind by {node_drift} blocks!"
+                            drift_msg = f"⚠️ DRIFT WARNING: Node {url} lagging behind by {node_drift} blocks!"
                             logging.warning(f"  {drift_msg}")
                             write_persistent_log(drift_msg)
-                            await send_discord_alert(session, "NODE_DRIFT_ALERT", f"⚠️ **Mainnet Node Lagging:** {url}\nBehind by {node_drift} blocks.")
+                            await send_discord_alert(session, "NODE_DRIFT_ALERT", f"⚠️ **Node Lagging:** {url}\nBehind by {node_drift} blocks.")
 
                     seen_hashes = {}
                     for url, info in latest_data.items():
@@ -184,19 +205,3 @@ async def monitor_network():
                             seen_hashes[h] = []
                         seen_hashes[h].append((url, b_hash))
                     
-                    for h, nodes in seen_hashes.items():
-                        if len(nodes) >= 2:
-                            unique_hashes = {b_hash for url, b_hash in nodes}
-                            if len(unique_hashes) > 1:
-                                fork_msg = f"🚨 CRITICAL MAINNET MISMATCH! Suspected Chain split/fork at Block {h}!"
-                                logging.critical(fork_msg)
-                                write_persistent_log(fork_msg)
-                                await send_discord_alert(session, "CHAIN_FORK_ALERT", f"🔥 **CRITICAL MAINNET:** Mismatched block hashes found at height {h}!")
-                                for url, b_hash in nodes:
-                                    logging.critical(f"   -> Node: {url} | Hash: {b_hash}")
-
-                print(f"🔄 Infinite Loop Status: Active | Monitoring Nodes 24/7")
-                print("-" * 85)
-                await asyncio.sleep(10) 
-                
-            except Exception as loop_error:
