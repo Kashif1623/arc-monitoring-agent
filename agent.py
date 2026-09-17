@@ -3,7 +3,6 @@ import time
 import logging
 import aiohttp
 import sys
-import os
 
 # Standard Professional Logging Setup
 logging.basicConfig(
@@ -13,11 +12,11 @@ logging.basicConfig(
 
 # 🌐 REAL & ACTIVE ARC MAINNET HIGH-PERFORMANCE ENDPOINTS
 RPC_ENDPOINTS = [
-    "https://rpc.mainnet.arc.io",
-    "https://arc-mainnet.drpc.org"
+    "https://arc.io",
+    "https://drpc.org"  
 ]
 
-# Local persistent log storage path configuration for Mainnet history
+# Local persistent log storage path configuration
 LOG_STORAGE_FILE = "mainnet_agent_history_logs.txt"
 
 # Stateful network tracking matrix
@@ -28,6 +27,7 @@ FAILURE_THRESHOLD = 3
 COOLDOWN_SECONDS = 30       
 MAX_DRIFT_THRESHOLD = 5     
 SUPER_PATIENT_TIMEOUT = 10  
+GAS_ALERT_THRESHOLD_GWEI = 50  # 🚨 Alert triggers if gas fee exceeds this limit
 
 # 🔋 BATTERY SAVER CONFIGURATION (15 Minutes = 900 Seconds)
 TOTAL_RUN_TIME_LIMIT = 900  
@@ -41,7 +41,7 @@ def write_persistent_log(message):
         with open(LOG_STORAGE_FILE, mode="a", encoding="utf-8") as file:
             file.write(clean_line)
     except Exception:
-        pass  # Enforces silent fault tolerance if system path locks temporarily
+        pass  
 
 def print_embedded_deployment_guides():
     """Prints production-grade deployment scripts directly inside the interface."""
@@ -66,12 +66,12 @@ async def send_discord_alert(session, alert_title, details):
 
     payload = {
         "username": "Arc Mainnet Auto-Agent",
-        "avatar_url": "https://imgur.com",  # Fixed Verified Official @arc Network Logo Link
+        "avatar_url": "https://imgur.com",
         "content": f"🚨 **[{alert_title}]**\n{details}\n⏰ **Time:** {time.strftime('%Y-%m-%d %H:%M:%S')}"
     }
     try:
         async with session.post(DISCORD_WEBHOOK_URL, json=payload, timeout=5) as resp:
-            if resp.status != 200:
+            if resp.status != 200:  
                 logging.error(f"Discord API returned error status: {resp.status}")
     except Exception as e:
         logging.error(f"Failed to push discord message stream: {str(e)}")
@@ -82,18 +82,33 @@ async def check_rpc_with_circuit_breaker(session, url):
         return None
 
     try:
-        payload = {"jsonrpc": "2.0", "method": "eth_getBlockByNumber", "params": ["latest", False], "id": 1}
-        async with session.post(url, json=payload, timeout=SUPER_PATIENT_TIMEOUT) as response:
-            if response.status == 200:
-                res_json = await response.json()
-                block_data = res_json.get("result")
-                if block_data and "number" in block_data and "hash" in block_data:
-                    rpc_status[url]["failures"] = 0  
-                    return {
-                        "url": url, 
-                        "height": int(block_data["number"], 16), 
-                        "hash": block_data["hash"]
-                    }
+        # 1. Fetch Block Data
+        block_payload = {"jsonrpc": "2.0", "method": "eth_getBlockByNumber", "params": ["latest", False], "id": 1}
+        # 2. Fetch USDC Gas Price Data
+        gas_payload = {"jsonrpc": "2.0", "method": "eth_gasPrice", "params": [], "id": 2}
+        
+        async with session.post(url, json=block_payload, timeout=SUPER_PATIENT_TIMEOUT) as response_block:
+            async with session.post(url, json=gas_payload, timeout=SUPER_PATIENT_TIMEOUT) as response_gas:
+                
+                if response_block.status == 200 and response_gas.status == 200:
+                    res_block = await response_block.json()
+                    res_gas = await response_gas.json()
+                    
+                    block_data = res_block.get("result")
+                    gas_hex = res_gas.get("result")
+                    
+                    if block_data and "number" in block_data and "hash" in block_data and gas_hex:
+                        rpc_status[url]["failures"] = 0  
+                        
+                        # Convert hex gas price to decimal Gwei values (1 USDC Gas Unit Tracking)
+                        gas_price_gwei = int(gas_hex, 16) / 10**9
+                        
+                        return {
+                            "url": url, 
+                            "height": int(block_data["number"], 16), 
+                            "hash": block_data["hash"],
+                            "gas_usdc": round(gas_price_gwei, 2)
+                        }
     except asyncio.TimeoutError:
         msg = f"⚠️ Latency Timeout: Mainnet Node {url} responded slower than {SUPER_PATIENT_TIMEOUT}s."
         logging.warning(msg)
@@ -118,14 +133,13 @@ async def monitor_network():
     
     async with aiohttp.ClientSession() as session:
         while True:
-            # 🕒 Check dynamic execution budget constraints
             elapsed_time = time.time() - START_TIMESTAMP
             if elapsed_time >= TOTAL_RUN_TIME_LIMIT:
                 kill_msg = "🔋 [BATTERY SAVER] 15 minutes limit reached! Automatically shutting down Mainnet agent process now."
                 logging.critical(kill_msg)
                 write_persistent_log(kill_msg)
                 await send_discord_alert(session, "AGENT_AUTO_SHUTDOWN", "🔋 **Battery Saver:** Mainnet Agent completed its runtime budget and shut down safely.")
-                sys.exit(0) # Strictly terminates the process to save phone processor memory
+                sys.exit(0) 
 
             try:
                 tasks = [check_rpc_with_circuit_breaker(session, url) for url in RPC_ENDPOINTS]
@@ -139,15 +153,21 @@ async def monitor_network():
                     write_persistent_log(msg)
                 
                 for url, data in latest_data.items():
-                    success_msg = f"✅ [Healthy Connection] {url} | Current Mainnet Block: {data['height']}"
+                    success_msg = f"✅ [Healthy] {url} | Block: {data['height']} | USDC Gas: {data['gas_usdc']} Gwei"
                     logging.info(f"  {success_msg}")
                     write_persistent_log(success_msg)
+                    
+                    # Gas Price Alert Check
+                    if data['gas_usdc'] > GAS_ALERT_THRESHOLD_GWEI:
+                        gas_alert_msg = f"🔥 HIGH GAS FEES ALERT: Arc Network USDC Gas is at {data['gas_usdc']} Gwei!"
+                        logging.warning(f"  {gas_alert_msg}")
+                        write_persistent_log(gas_alert_msg)
+                        await send_discord_alert(session, "HIGH_GAS_ALERT", f"💵 **Arc USDC Gas Spike:** {data['gas_usdc']} Gwei\nNode: {url}")
                 
                 if len(latest_data) >= 2:
                     heights = [info["height"] for info in latest_data.values()]
                     max_height = max(heights)
                     
-                    # 1. Automatic Dynamic Sync Drift Tracking Matrix
                     for url, info in latest_data.items():
                         node_drift = max_height - info["height"]
                         if node_drift >= MAX_DRIFT_THRESHOLD:
@@ -156,7 +176,6 @@ async def monitor_network():
                             write_persistent_log(drift_msg)
                             await send_discord_alert(session, "NODE_DRIFT_ALERT", f"⚠️ **Mainnet Node Lagging:** {url}\nBehind by {node_drift} blocks.")
 
-                    # 2. Complete Fork / Consensus Split Verification Loop
                     seen_hashes = {}
                     for url, info in latest_data.items():
                         h = info["height"]
@@ -182,11 +201,3 @@ async def monitor_network():
                 await asyncio.sleep(10) 
                 
             except Exception as loop_error:
-                logging.error(f"🔄 Mainnet Session interrupted: {str(loop_error)}. Recovering in 5s...")
-                await asyncio.sleep(5)
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(monitor_network())
-    except KeyboardInterrupt:
-        logging.info("🛑 Mainnet Monitor agent safely stopped via terminal control.")
