@@ -64,7 +64,7 @@ def print_embedded_deployment_guides():
     print("💻 [DEPLOYMENT GUIDE] TO RUN SILENTLY ON WINDOWS BACKGROUND:")
     print("  Rename this file to 'agent.pyw' and run via Windows Task Scheduler utilizing: pythonw agent.pyw")
     print("=" * 85 + "\n")
-async def send_discord_alert(session, alert_title, details):
+  async def send_discord_alert(session, alert_title, details):
     """Sends asynchronous emergency notifications straight to Discord mobile."""
     DISCORD_WEBHOOK_URL = "YOUR_DISCORD_WEBHOOK_URL_HERE"
     if DISCORD_WEBHOOK_URL == "YOUR_DISCORD_WEBHOOK_URL_HERE":
@@ -114,12 +114,13 @@ async def check_rpc_with_circuit_breaker(session, url):
         rpc_status[url]["circuit_broken_until"] = current_time + COOLDOWN_SECONDS
         await send_discord_alert(session, "NODE_CRASH_ALERT", f"🔴 **Node Down:** {url}\nFailed {FAILURE_THRESHOLD} times.")
     return None
-async def monitor_network():
+    async def monitor_network():
     global ACTIVE_RPC_POOL
     print_embedded_deployment_guides()
     logging.info("🚀 Autonomous Arc Mainnet Monitor Agent successfully deployed (24/7 Engine Active).\n")
     
-   connector = aiohttp.TCPConnector(limit_per_host=5)
+    # 💎 THEEK KAR DIYA: Extra spacing error perfectly fix ho gayi hai
+    connector = aiohttp.TCPConnector(limit_per_host=5)
     async with aiohttp.ClientSession(connector=connector) as session:
         while True:
             try:
@@ -172,6 +173,12 @@ if __name__ == "__main__":
         asyncio.run(monitor_network())
     except KeyboardInterrupt:
         print("\n🛑 Mainnet Monitor Agent safely stopped by user.")
+
+    
+  
+
+
+
 
 
 
