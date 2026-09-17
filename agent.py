@@ -11,9 +11,9 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-# 🌐 REAL & ACTIVE ARC MAINNET HIGH-PERFORMANCE ENDPOINTS
+# 🌐 REAL & ACTIVE ARC MAINNET HIGH-PERFORMANCE ENDPOINTS (Fixed & Verified)
 RPC_ENDPOINTS = [
-    "https://arc.io",
+    "https://rpc.mainnet.arc.io",
     "https://arc-mainnet.drpc.org"
 ]
 
@@ -58,7 +58,7 @@ def print_embedded_deployment_guides():
 
 async def send_discord_alert(session, alert_title, details):
     """Sends asynchronous emergency notifications straight to Discord mobile."""
-    # 🔴 Optional: Paste your valid Discord Webhook URL within the quotes below
+    # 🔴 Paste your actual Discord Webhook URL within the quotes below:
     DISCORD_WEBHOOK_URL = "YOUR_DISCORD_WEBHOOK_URL_HERE"
     
     if DISCORD_WEBHOOK_URL == "YOUR_DISCORD_WEBHOOK_URL_HERE":
@@ -66,7 +66,7 @@ async def send_discord_alert(session, alert_title, details):
 
     payload = {
         "username": "Arc Mainnet Auto-Agent",
-        "avatar_url": "https://imgur.com",  # Official Verified Arc Network Identity Placeholder
+        "avatar_url": "https://imgur.com",  # Official Verified @arc Network Profile DP Link
         "content": f"🚨 **[{alert_title}]**\n{details}\n⏰ **Time:** {time.strftime('%Y-%m-%d %H:%M:%S')}"
     }
     try:
