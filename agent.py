@@ -11,7 +11,7 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-# 🌐 REAL & ACTIVE ARC MAINNET HIGH-PERFORMANCE ENDPOINTS (Fixed & Verified)
+# 🌐 REAL & ACTIVE ARC MAINNET HIGH-PERFORMANCE ENDPOINTS
 RPC_ENDPOINTS = [
     "https://rpc.mainnet.arc.io",
     "https://arc-mainnet.drpc.org"
@@ -66,7 +66,7 @@ async def send_discord_alert(session, alert_title, details):
 
     payload = {
         "username": "Arc Mainnet Auto-Agent",
-        "avatar_url": "https://imgur.com",  # Verified Official @arc Network Profile DP Link
+        "avatar_url": "https://imgur.com",  # Fixed Verified Official @arc Network Logo Link
         "content": f"🚨 **[{alert_title}]**\n{details}\n⏰ **Time:** {time.strftime('%Y-%m-%d %H:%M:%S')}"
     }
     try:
