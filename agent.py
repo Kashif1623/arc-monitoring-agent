@@ -66,7 +66,7 @@ async def send_discord_alert(session, alert_title, details):
 
     payload = {
         "username": "Arc Mainnet Auto-Agent",
-        "avatar_url": "https://imgur.com",  # Official Verified @arc Network Profile DP Link
+        "avatar_url": "https://imgur.com",  # Verified Official @arc Network Profile DP Link
         "content": f"🚨 **[{alert_title}]**\n{details}\n⏰ **Time:** {time.strftime('%Y-%m-%d %H:%M:%S')}"
     }
     try:
