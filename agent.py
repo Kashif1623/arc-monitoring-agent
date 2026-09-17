@@ -2,7 +2,7 @@ import asyncio
 import time
 import logging
 import aiohttp
-import sys
+import os
 
 # Standard Professional Logging Setup
 logging.basicConfig(
@@ -18,24 +18,26 @@ RPC_ENDPOINTS = [
 
 # Local persistent log storage path configuration
 LOG_STORAGE_FILE = "mainnet_agent_history_logs.txt"
+MAX_LOG_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB Auto-Rotation limit for mobile safety
 
 # Stateful network tracking matrix
 rpc_status = {url: {"failures": 0, "circuit_broken_until": 0} for url in RPC_ENDPOINTS}
 
-# Global Operational Rules for 24/7 Automation
+# Global Operational Rules for 24/7 Non-Stop Automation
 FAILURE_THRESHOLD = 3       
 COOLDOWN_SECONDS = 30       
 MAX_DRIFT_THRESHOLD = 5     
 SUPER_PATIENT_TIMEOUT = 10  
 GAS_ALERT_THRESHOLD_GWEI = 50  # 🚨 Alert triggers if gas fee exceeds this limit
 
-# 🔋 BATTERY SAVER CONFIGURATION (15 Minutes = 900 Seconds)
-TOTAL_RUN_TIME_LIMIT = 900  
-START_TIMESTAMP = time.time()
-
 def write_persistent_log(message):
-    """Safely appends runtime console metrics to local text log without overwriting history."""
+    """Safely appends runtime console metrics to local text log. Rotates if file exceeds 5MB."""
     try:
+        # Mobile Storage Protection Setup
+        if os.path.exists(LOG_STORAGE_FILE) and os.path.getsize(LOG_STORAGE_FILE) > MAX_LOG_SIZE_BYTES:
+            with open(LOG_STORAGE_FILE, mode="w", encoding="utf-8") as file:
+                file.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] --- Log file rotated/cleared to save mobile space ---\n")
+                
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
         clean_line = f"[{timestamp}] {message}\n"
         with open(LOG_STORAGE_FILE, mode="a", encoding="utf-8") as file:
@@ -46,8 +48,8 @@ def write_persistent_log(message):
 def print_embedded_deployment_guides():
     """Prints production-grade deployment scripts directly inside the interface."""
     print("=" * 85)
-    print("📱 [BATTERY SAVER ACTIVATED] TERMUX 15-MINUTE MAINNET RUNNER:")
-    print("  Run this exact command to maintain execution state when the device locks:")
+    print("📱 [24/7 RUNNER ACTIVATED] TERMUX BACKGROUND RUNNER:")
+    print("  Run this exact command to maintain execution state indefinitely when device locks:")
     print(f"  --> termux-wake-lock && nohup python agent.py >> {LOG_STORAGE_FILE} 2>&1 &")
     print(f"\n  * Note: To view accumulative logs history later, execute: cat {LOG_STORAGE_FILE}")
     print("=" * 85)
@@ -94,18 +96,22 @@ async def check_rpc_with_circuit_breaker(session, url):
                     res_block = await response_block.json()
                     res_gas = await response_gas.json()
                     
-                    block_data = res_block.get("result")
-                    gas_hex = res_gas.get("result")
+                    block_data = res_block.get("result") if isinstance(res_block, dict) else None
+                    gas_hex = res_gas.get("result") if isinstance(res_gas, dict) else None
                     
                     if block_data and "number" in block_data and "hash" in block_data and gas_hex:
                         rpc_status[url]["failures"] = 0  
                         
-                        # Convert hex gas price to decimal Gwei values (1 USDC Gas Unit Tracking)
-                        gas_price_gwei = int(gas_hex, 16) / 10**9
+                        # Deep Safe Data Parsing to prevent ValueErrors
+                        try:
+                            gas_price_gwei = int(gas_hex, 16) / 10**9
+                            block_height = int(block_data["number"], 16)
+                        except (ValueError, TypeError):
+                            return None
                         
                         return {
                             "url": url, 
-                            "height": int(block_data["number"], 16), 
+                            "height": block_height, 
                             "hash": block_data["hash"],
                             "gas_usdc": round(gas_price_gwei, 2)
                         }
@@ -127,20 +133,14 @@ async def check_rpc_with_circuit_breaker(session, url):
 
 async def monitor_network():
     print_embedded_deployment_guides()
-    init_msg = "🚀 Autonomous Arc Mainnet Monitor Agent successfully deployed (15-Min Timer Active)."
+    init_msg = "🚀 Autonomous Arc Mainnet Monitor Agent successfully deployed (24/7 Infinite Non-Stop Active)."
     logging.info(init_msg + "\n")
     write_persistent_log(init_msg)
     
-    async with aiohttp.ClientSession() as session:
+    # Resource Leak Protection via connection limits
+    connector = aiohttp.TCPConnector(limit_per_host=5)
+    async with aiohttp.ClientSession(connector=connector) as session:
         while True:
-            elapsed_time = time.time() - START_TIMESTAMP
-            if elapsed_time >= TOTAL_RUN_TIME_LIMIT:
-                kill_msg = "🔋 [BATTERY SAVER] 15 minutes limit reached! Automatically shutting down Mainnet agent process now."
-                logging.critical(kill_msg)
-                write_persistent_log(kill_msg)
-                await send_discord_alert(session, "AGENT_AUTO_SHUTDOWN", "🔋 **Battery Saver:** Mainnet Agent completed its runtime budget and shut down safely.")
-                sys.exit(0) 
-
             try:
                 tasks = [check_rpc_with_circuit_breaker(session, url) for url in RPC_ENDPOINTS]
                 results = await asyncio.gather(*tasks)
@@ -195,8 +195,7 @@ async def monitor_network():
                                 for url, b_hash in nodes:
                                     logging.critical(f"   -> Node: {url} | Hash: {b_hash}")
 
-                remaining_minutes = int((TOTAL_RUN_TIME_LIMIT - elapsed_time) / 60)
-                print(f"⏳ Time Remaining until Auto-Kill: {remaining_minutes} Minutes")
+                print(f"🔄 Infinite Loop Status: Active | Monitoring Nodes 24/7")
                 print("-" * 85)
                 await asyncio.sleep(10) 
                 
