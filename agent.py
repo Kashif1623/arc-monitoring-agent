@@ -4,98 +4,99 @@ import logging
 import aiohttp
 import os
 
-# Standard Professional Logging Setup
+# Ultra-Clean Enterprise Logging Setup (Strict International Output Only)
 logging.basicConfig(
     level=logging.INFO, 
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s | %(levelname)s | %(message)s'
 )
 
-# 🌐 VERIFIED FUNCTIONAL PRODUCTION JSON-RPC PATHS ONLY
+# 🌐 GLOBAL DECENTRALIZED ARC MAINNET MULTI-NODE INFRASTRUCTURE
 PRIMARY_RPC_ENDPOINTS = [
-    "https://drpc.org",                  # Node 1: Official Free Public Mainnet Gateway
-    "https://drpc.org"  # Node 2: Official AI Load-Balanced API Node Route
+    "https://drpc.live", # Your Premium Private Endpoint
+    "https://arc-rpc.publicnode.com",                                       # Global PublicNode Infrastructure Route
+    "https://rpc.blockdaemon.mainnet.arc.io",                               # Dedicated Blockdaemon Enterprise Node
+    "https://rpc.mainnet.arc.io"                                            # Core Arc Mainnet Infrastructure Gateway
 ]
 
-# 🔄 DYNAMIC STATE FAILOVER ROUTE
+# 🔄 AUTOMATED DISASTER RECOVERY CHANNELS (WORLDWIDE FAILOVER)
 FALLBACK_RPC_ENDPOINTS = [
-    "https://arc.network"
+    "https://rpc.drpc.mainnet.arc.io"
 ]
 
 LOG_STORAGE_FILE = "mainnet_agent_history_logs.txt"
-MAX_LOG_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB Auto-rotation guard for phone storage
+MAX_LOG_SIZE_BYTES = 5 * 1024 * 1024  # 5MB Dynamic rotation constraint
 
 ACTIVE_RPC_POOL = list(PRIMARY_RPC_ENDPOINTS)
 rpc_status = {url: {"failures": 0, "circuit_broken_until": 0} for url in (PRIMARY_RPC_ENDPOINTS + FALLBACK_RPC_ENDPOINTS)}
 
-# Global Mainnet Operational Parameters
-FAILURE_THRESHOLD = 3       
+# Global Operational SLA Parameters
+FAILURE_THRESHOLD = 2       
 COOLDOWN_SECONDS = 30       
-MAX_DRIFT_THRESHOLD = 3     # Fast sub-second tracking block threshold (Arc produces blocks ~0.5s)
-SUPER_PATIENT_TIMEOUT = 8   # Optimised response window to prevent network socket blocking
-GAS_ALERT_THRESHOLD_USDC = 0.05  # Direct USDC dollar-denominated alert ceiling
+MAX_DRIFT_THRESHOLD = 3     
+SUPER_PATIENT_TIMEOUT = 5   # Tight timeout bounds to prevent loop blocking
+GAS_ALERT_THRESHOLD_GWEI = 35.0  
 
 def write_persistent_log(message):
     try:
         if os.path.exists(LOG_STORAGE_FILE) and os.path.getsize(LOG_STORAGE_FILE) > MAX_LOG_SIZE_BYTES:
             with open(LOG_STORAGE_FILE, mode="w", encoding="utf-8") as file:
-                file.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] --- Log file rotated to save local space ---\n")
-                
-        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                file.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] --- Log rotated systematically ---\n")
         with open(LOG_STORAGE_FILE, mode="a", encoding="utf-8") as file:
-            file.write(f"[{timestamp}] {message}\n")
+            file.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}\n")
     except Exception:
         pass  
 
-def print_embedded_deployment_guides():
-    print("=" * 85)
-    print("📱 [PRODUCTION ENGAGED] TERMUX BACKGROUND RUNNER SCRIPT:")
-    print("  Run this exact layout terminal sequence to retain background processing state:")
-    print(f"  --> termux-wake-lock && nohup python agent.py >> {LOG_STORAGE_FILE} 2>&1 &")
-    print("=" * 85 + "\n")
+def print_clean_header():
+    print("=" * 90)
+    print("⚡ ARC MAINNET GLOBAL NETWORK MONITORING AGENT v2.0")
+    print("🔒 STATUS: ENTERPRISE LIVE MONITORING ENGAGED (WORLDWIDE CLEAN INTERFACE)")
+    print("=" * 90 + "\n")
+
+async def fetch_json(session, url, payload):
+    try:
+        async with session.post(url, json=payload, timeout=SUPER_PATIENT_TIMEOUT) as response:
+            if response.status == 200:
+                return await response.json()
+    except Exception:
+        pass
+    return None
 
 async def check_rpc_with_circuit_breaker(session, url):
     current_time = time.time()
     if current_time < rpc_status[url]["circuit_broken_until"]:
         return None
 
-    try:
-        block_payload = {"jsonrpc": "2.0", "method": "eth_getBlockByNumber", "params": ["latest", False], "id": 1}
-        gas_payload = {"jsonrpc": "2.0", "method": "eth_gasPrice", "params": [], "id": 2}
+    block_payload = {"jsonrpc": "2.0", "method": "eth_getBlockByNumber", "params": ["latest", False], "id": 1}
+    gas_payload = {"jsonrpc": "2.0", "method": "eth_gasPrice", "params": [], "id": 2}
+    
+    res_block, res_gas = await asyncio.gather(
+        fetch_json(session, url, block_payload),
+        fetch_json(session, url, gas_payload),
+        return_exceptions=True
+    )
+    
+    if res_block and res_gas and not isinstance(res_block, Exception) and not isinstance(res_gas, Exception):
+        block_data = res_block.get("result")
+        gas_hex = res_gas.get("result")
         
-        async with session.post(url, json=block_payload, timeout=SUPER_PATIENT_TIMEOUT) as rb, session.post(url, json=gas_payload, timeout=SUPER_PATIENT_TIMEOUT) as rg:
-            if rb.status == 200 and rg.status == 200:
-                res_block, res_gas = await rb.json(), await rg.json()
-                block_data = res_block.get("result")
-                gas_hex = res_gas.get("result")
-                
-                if block_data and "number" in block_data and "hash" in block_data and gas_hex:
-                    rpc_status[url]["failures"] = 0  
-                    try:
-                        gas_raw = int(gas_hex, 16)
-                        gas_converted = round(gas_raw / 10**9, 6) 
-                        block_height = int(block_data["number"], 16)
-                    except (ValueError, TypeError):
-                        return None
-                    return {"url": url, "height": block_height, "hash": block_data["hash"], "gas": gas_converted}
-    except Exception: 
-        pass
+        if block_data and "number" in block_data and "hash" in block_data and gas_hex:
+            rpc_status[url]["failures"] = 0  
+            gas_gwei = round(int(gas_hex, 16) / 10**9, 6) 
+            return {"url": url, "height": int(block_data["number"], 16), "hash": block_data["hash"], "gas": gas_gwei}
 
+    # Internal failover tracker (Silent - No print statements to ensure clean interface)
     rpc_status[url]["failures"] += 1
     if rpc_status[url]["failures"] >= FAILURE_THRESHOLD:
         rpc_status[url]["circuit_broken_until"] = current_time + COOLDOWN_SECONDS
-        err_msg = f"CRITICAL FAULT: Node isolated -> {url} for {COOLDOWN_SECONDS}s"
-        logging.error(err_msg)
-        write_persistent_log(err_msg)
+        write_persistent_log(f"Node isolated silently: {url}")
     return None
 
 async def monitor_network():
     global ACTIVE_RPC_POOL
-    print_embedded_deployment_guides()
-    init_msg = "Core Production Monitor safely launched on Arc Mainnet."
-    logging.info(init_msg)
-    write_persistent_log(init_msg)
+    print_clean_header()
+    write_persistent_log("System core initialization sequence completed successfully.")
     
-    connector = aiohttp.TCPConnector(limit_per_host=5, ttl_dns_cache=300)
+    connector = aiohttp.TCPConnector(limit_per_host=10, ttl_dns_cache=300)
     async with aiohttp.ClientSession(connector=connector) as session:
         while True:
             try:
@@ -104,51 +105,42 @@ async def monitor_network():
                 latest_data = {res["url"]: res for res in results if res is not None}
                 
                 if not latest_data:
-                    warn_msg = "🚨 NETWORK OUTAGE ALERT: Primary gateways dropped! Pulling backup pool channels..."
-                    logging.warning(warn_msg)
-                    write_persistent_log(warn_msg)
+                    write_persistent_log("Disaster recovery protocol triggered: All nodes offline.")
                     ACTIVE_RPC_POOL = list(PRIMARY_RPC_ENDPOINTS + FALLBACK_RPC_ENDPOINTS)
                     await asyncio.sleep(4)
                     continue
                 
                 if len(latest_data) >= 2:
-                    heights = [info["height"] for info in latest_data.values()]
-                    max_height = max(heights)
+                    max_height = max([info["height"] for info in latest_data.values()])
                     
                     for url, info in latest_data.items():
                         node_drift = max_height - info["height"]
                         if node_drift >= MAX_DRIFT_THRESHOLD:
-                            drift_line = f"⚠️ DESYNC DETECTED: Node {url} lag depth is {node_drift} blocks!"
-                            logging.warning(drift_line)
-                            write_persistent_log(drift_line)
+                            write_persistent_log(f"Desync on {url}: Lagging {node_drift} blocks.")
 
                     seen_hashes = {}
                     for url, info in latest_data.items():
-                        h = info["height"]
-                        seen_hashes.setdefault(h, []).append((url, info["hash"]))
+                        seen_hashes.setdefault(info["height"], []).append(info["hash"])
                     
-                    for h, nodes in seen_hashes.items():
-                        if len(nodes) >= 2 and len({b_hash for url, b_hash in nodes}) > 1:
-                            fork_line = f"🚨 EXTREME EMERGENCY: Chain state Split/Fork identified at block {h}!"
-                            logging.critical(fork_line)
-                            write_persistent_log(fork_line)
+                    for h, hashes in seen_hashes.items():
+                        if len(hashes) >= 2 and len(set(hashes)) > 1:
+                            logging.critical(f"🔥 [CHAIN SPLIT] State divergence detected at Block {h}!")
 
+                # Strict filtering: Displays ONLY operational verified online nodes
                 for url, data in latest_data.items():
-                    log_line = f"[Mainnet Operational] {url} | Block: {data['height']} | Base Gas Rate: {data['gas']} USDC"
-                    logging.info(log_line)
-                    write_persistent_log(log_line)
-                    
-                    if data['gas'] > GAS_ALERT_THRESHOLD_USDC:
-                        logging.warning(f"💵 Gas Spike Detected: {data['gas']} USDC on {url}")
+                    logging.info(f"🟩 [ONLINE] {url} | Block: {data['height']} | Gas: {data['gas']} Gwei")
+                    if data['gas'] > GAS_ALERT_THRESHOLD_GWEI:
+                        logging.warning(f"💵 [GAS SPIKE] Rate anomaly detected: {data['gas']} Gwei")
 
+                print("-" * 90) # Standard Clean Separation Line
                 await asyncio.sleep(10) 
                 
             except Exception as loop_error:
-                write_persistent_log(f"Fatal exception inside runtime event sequence: {str(loop_error)}")
+                write_persistent_log(f"Core runtime kernel exception: {str(loop_error)}")
                 await asyncio.sleep(5)
 
 if __name__ == "__main__":
     try:
         asyncio.run(monitor_network())
     except KeyboardInterrupt:
-        print("\n🛑 Background execution detached cleanly by system process.")
+        print("\n🛑 System termination signal intercepted. Detaching cleanly.")
