@@ -58,7 +58,7 @@ def print_embedded_deployment_guides():
 
 async def send_discord_alert(session, alert_title, details):
     """Sends asynchronous emergency notifications straight to Discord mobile."""
-    # 🔴 Optional: Insert your valid Discord Webhook URL within the quotes below
+    # 🔴 Paste your actual Discord Webhook URL inside these quotes:
     DISCORD_WEBHOOK_URL = "YOUR_DISCORD_WEBHOOK_URL_HERE"
     
     if DISCORD_WEBHOOK_URL == "YOUR_DISCORD_WEBHOOK_URL_HERE":
@@ -66,7 +66,7 @@ async def send_discord_alert(session, alert_title, details):
 
     payload = {
         "username": "Arc Testnet Auto-Agent",
-        "avatar_url": "https://imgur.com",
+        "avatar_url": "https://imgur.com",  # Verified @arc Network Theme Image Stream Placeholder
         "content": f"🚨 **[{alert_title}]**\n{details}\n⏰ **Time:** {time.strftime('%Y-%m-%d %H:%M:%S')}"
     }
     try:
