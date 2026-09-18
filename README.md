@@ -27,6 +27,16 @@ pkg update && pkg install python libffi clang openssl curl -y && pip install aio
 2. Copy your Python configuration script (`agent.py` or `agent_testnet.py`) from GitHub and paste it using the clipboard icon.
 3. Save the file and tap the yellow **Play/Button Icon** to run.
 
+#### 🟩 Box 1: Run Arc Mainnet Monitoring Agent (Pydroid 3)
+```bash
+curl -sSL https://raw.githubusercontent.com/Kashif1623/arc-monitoring-agent/main/agent.py -o agent.py
+```
+
+#### 🔵 Box 2: Run Arc Testnet Monitoring Agent (Pydroid 3)
+```bash
+curl -sSL https://raw.githubusercontent.com/Kashif1623/arc-monitoring-agent/main/agent.py -o agent_testnet.py
+```
+
 ### Option B: 24/7 Production Background Deployment (Termux Server)
 1. Secure your active shell workspace:
 ```bash
