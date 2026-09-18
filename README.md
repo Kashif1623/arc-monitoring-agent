@@ -34,7 +34,7 @@ curl -sSL https://raw.githubusercontent.com/Kashif1623/arc-monitoring-agent/main
 
 #### 🔵 Box 2: Run Arc Testnet Monitoring Agent (Pydroid 3)
 ```bash
-curl -sSL https://raw.githubusercontent.com/Kashif1623/arc-monitoring-agent/main/agent.py -o agent_testnet.py
+curl -sSL https://raw.githubusercontent.com/Kashif1623/arc-monitoring-agent/main/agent_testnet.py -o agent_testnet.py
 ```
 
 ### Option B: 24/7 Production Background Deployment (Termux Server)
