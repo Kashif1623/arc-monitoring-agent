@@ -36,12 +36,13 @@ termux-wake-lock
 
 #### 🟢 Box 1: Run Arc Mainnet Monitoring Agent
 ```bash
-curl -sSL https://githubusercontent.com -o agent.py && nohup python agent.py >> mainnet_agent_history_logs.txt 2>&1 &
+curl -sSL https://raw.githubusercontent.com/Kashif1623/arc-monitoring-agent/main/agent.py -o agent.py && nohup python agent.py >> mainnet_agent_history_logs.txt 2>&1 &
+```
 ```
 
 #### 🔵 Box 2: Run Arc Testnet Monitoring Agent
 ```bash
-curl -sSL https://githubusercontent.com -o agent_testnet.py && nohup python agent_testnet.py >> agent_history_logs.txt 2>&1 &
+curl -sSL https://raw.githubusercontent.com/Kashif1623/arc-monitoring-agent/main/agent_testnet.py -o agent_testnet.py && nohup python agent_testnet.py >> agent_history_logs.txt 2>&1 &
 ```
 
 ---
