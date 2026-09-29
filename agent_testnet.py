@@ -1,170 +1,281 @@
 import asyncio
 import time
-import logging
 import aiohttp
 import os
+import threading
+import queue
+import sqlite3
+import requests
+from flask import Flask, Response, jsonify, request
 
-# Ultra-Clean Enterprise Logging Setup (Strict International Output Only)
-logging.basicConfig(
-    level=logging.INFO, 
-    format='%(asctime)s | %(levelname)s | %(message)s'
-)
-
-# 🌐 VERIFIED FUNCTIONAL PRODUCTION JSON-RPC PATHS FOR ARC TESTNET
+# =======================================================================
+# CONFIGURATION & GLOBAL STATE (TESTNET)
+# =======================================================================
 PRIMARY_RPC_ENDPOINTS = [
-    "https://arc-testnet.drpc.org",          # Official dRPC Public Testnet Route
-    "https://rpc.testnet.arc.network"        # Core Foundation Testnet Node Gateway
+    "https://arc-testnet.drpc.org",          
+    "https://rpc.testnet.arc.network"        
 ]
-
-# 🔄 DYNAMIC STATE FAILOVER BACKUP ROUTE (TESTNET OVERVIEW)
 FALLBACK_RPC_ENDPOINTS = [
     "https://testnet.arc.network"
 ]
 
-LOG_STORAGE_FILE = "agent_history_logs.txt"
-MAX_LOG_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB Auto-Rotation Constraint
+DISCORD_WEBHOOK_URL = "YOUR_DISCORD_WEBHOOK_URL_HERE"
+TELEGRAM_BOT_TOKEN = "8886231393:AAHi9AWl1N07VAp9OTm5_C8DmUqguucOfLE" 
+TELEGRAM_CHAT_ID = "8822300532"
 
-ACTIVE_RPC_POOL = list(PRIMARY_RPC_ENDPOINTS)
-rpc_status = {url: {"failures": 0, "circuit_broken_until": 0} for url in (PRIMARY_RPC_ENDPOINTS + FALLBACK_RPC_ENDPOINTS)}
-
-# Global Operational SLA Parameters
 FAILURE_THRESHOLD = 3
 COOLDOWN_SECONDS = 20
 MAX_DRIFT_THRESHOLD = 8
-SUPER_PATIENT_TIMEOUT = 6   # Optimized to prevent mobile background loops from hanging
-GAS_ALERT_THRESHOLD_GWEI = 150
+SUPER_PATIENT_TIMEOUT = 6   
+GAS_ALERT_THRESHOLD_GWEI = 150.0  
+HIGH_LATENCY_THRESHOLD_MS = 500 
 
-TOTAL_RUN_TIME_LIMIT = 900  # Safe execution bounds (15 Minutes runtime limits)
-START_TIMESTAMP = time.time()
+DB_FILE = "arc_testnet_sla.db"
+ACTIVE_RPC_POOL = list(PRIMARY_RPC_ENDPOINTS)
+rpc_status = {url: {"failures": 0, "circuit_broken_until": 0} for url in (PRIMARY_RPC_ENDPOINTS + FALLBACK_RPC_ENDPOINTS)}
+global_node_data = {}  
 
-def write_persistent_log(message):
+app = Flask(__name__)
+log_queue = queue.Queue(maxsize=500)
+
+# =======================================================================
+# SQLITE DATABASE SETUP (SLA & UPTIME)
+# =======================================================================
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS uptime_logs
+                 (timestamp TEXT, node_url TEXT, status TEXT, latency_ms INTEGER, block_height INTEGER)''')
+    conn.commit()
+    conn.close()
+
+def log_to_db(url, status, latency=0, block=0):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+    c.execute("INSERT INTO uptime_logs VALUES (?, ?, ?, ?, ?)", (timestamp, url, status, latency, block))
+    conn.commit()
+    conn.close()
+
+# =======================================================================
+# CORE LOGGING & ALERTS
+# =======================================================================
+def emit_log(message):
+    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+    formatted_msg = f"{timestamp} | {message}\n"
     try:
-        if os.path.exists(LOG_STORAGE_FILE) and os.path.getsize(LOG_STORAGE_FILE) > MAX_LOG_SIZE_BYTES:
-            with open(LOG_STORAGE_FILE, mode="w", encoding="utf-8") as file:
-                file.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] --- Log rotated systematically ---\n")
-        with open(LOG_STORAGE_FILE, mode="a", encoding="utf-8") as file:
-            file.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}\n")
-    except Exception:
-        pass  
-
-def print_clean_header():
-    print("=" * 90)
-    print("⚡ ARC TESTNET GLOBAL NETWORK MONITORING AGENT v2.0")
-    print("🔒 STATUS: ENTERPRISE LIVE MONITORING ENGAGED (WORLDWIDE CLEAN INTERFACE)")
-    print("=" * 90 + "\n")
+        log_queue.put_nowait(formatted_msg)
+    except queue.Full:
+        log_queue.get() 
+        log_queue.put_nowait(formatted_msg)
 
 async def send_discord_alert(session, alert_title, details):
-    DISCORD_WEBHOOK_URL = "YOUR_DISCORD_WEBHOOK_URL_HERE"
-    if DISCORD_WEBHOOK_URL == "YOUR_DISCORD_WEBHOOK_URL_HERE": 
-        return
-    payload = {
-        "username": "Arc Testnet Auto-Agent",
-        "content": f"🚨 **[{alert_title}]**\n{details}\n⏰ **Time:** {time.strftime('%Y-%m-%d %H:%M:%S')}"
-    }
-    try:
-        await session.post(DISCORD_WEBHOOK_URL, json=payload, timeout=5)
-    except Exception:
-        pass
+    if DISCORD_WEBHOOK_URL == "YOUR_DISCORD_WEBHOOK_URL_HERE": return
+    payload = {"username": "Arc Testnet Sentinel", "content": f"🚨 **[{alert_title}]**\n{details}\n⏰ **Time:** {time.strftime('%Y-%m-%d %H:%M:%S')}"}
+    try: await session.post(DISCORD_WEBHOOK_URL, json=payload, timeout=5)
+    except Exception: pass
 
+def send_telegram_message(text):
+    if TELEGRAM_BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN_HERE": return
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}
+    try: requests.post(url, json=payload, timeout=5)
+    except Exception: pass
+
+# =======================================================================
+# ASYNC NETWORK MONITORING ENGINE
+# =======================================================================
 async def fetch_json(session, url, payload):
+    start_time = time.time()
     try:
         async with session.post(url, json=payload, timeout=SUPER_PATIENT_TIMEOUT) as response:
             if response.status == 200:
-                return await response.json()
+                data = await response.json()
+                latency = int((time.time() - start_time) * 1000)
+                return data, latency
     except Exception:
         pass
-    return None
+    return None, 0
 
 async def check_rpc_with_circuit_breaker(session, url):
     current_time = time.time()
-    if current_time < rpc_status[url]["circuit_broken_until"]: 
-        return None
+    if current_time < rpc_status[url]["circuit_broken_until"]: return None
 
     block_payload = {"jsonrpc": "2.0", "method": "eth_getBlockByNumber", "params": ["latest", False], "id": 1}
     gas_payload = {"jsonrpc": "2.0", "method": "eth_gasPrice", "params": [], "id": 2}
     
-    # ⚡ Parallel Socket Non-Blocking Core Engine
-    res_block, res_gas = await asyncio.gather(
+    res_block_tuple, res_gas_tuple = await asyncio.gather(
         fetch_json(session, url, block_payload),
         fetch_json(session, url, gas_payload),
         return_exceptions=True
     )
     
-    if res_block and res_gas and not isinstance(res_block, Exception) and not isinstance(res_gas, Exception):
-        block_data = res_block.get("result")
-        gas_hex = res_gas.get("result")
+    if isinstance(res_block_tuple, tuple) and isinstance(res_gas_tuple, tuple):
+        res_block, latency_block = res_block_tuple
+        res_gas, _ = res_gas_tuple
         
-        if block_data and "number" in block_data and "hash" in block_data and gas_hex:
-            rpc_status[url]["failures"] = 0  
-            gas_gwei = round(int(gas_hex, 16) / 10**9, 2)
-            return {"url": url, "height": int(block_data["number"], 16), "hash": block_data["hash"], "gas_testnet": gas_gwei}
+        if res_block and res_gas:
+            block_data = res_block.get("result")
+            gas_hex = res_gas.get("result")
+            
+            if block_data and "number" in block_data and gas_hex:
+                rpc_status[url]["failures"] = 0  
+                gas_gwei = round(int(gas_hex, 16) / 10**9, 2) 
+                height = int(block_data["number"], 16)
+                
+                log_to_db(url, "ONLINE", latency_block, height)
+                return {"url": url, "height": height, "hash": block_data["hash"], "gas": gas_gwei, "latency": latency_block}
 
-    # Silent Failover Circuit Routing (Zero Terminal Print Trash)
     rpc_status[url]["failures"] += 1
+    log_to_db(url, "OFFLINE", 0, 0)
+    
     if rpc_status[url]["failures"] >= FAILURE_THRESHOLD:
         rpc_status[url]["circuit_broken_until"] = current_time + COOLDOWN_SECONDS
-        write_persistent_log(f"Testnet Node isolated silently: {url}")
+        emit_log(f"🔴 [CRITICAL] Testnet Node isolated: {url}")
         await send_discord_alert(session, "NODE_CRASH_ALERT", f"🔴 Testnet Node Down: {url}")
     return None
 
 async def monitor_network():
-    global ACTIVE_RPC_POOL
-    print_clean_header()
-    write_persistent_log("Testnet monitoring engine successfully initialized.")
+    global ACTIVE_RPC_POOL, global_node_data
+    emit_log("INFO | Testnet Sentinel Core & SQLite initialized successfully.")
     
-    connector = aiohttp.TCPConnector(limit_per_host=10, ttl_dns_cache=300)
+    connector = aiohttp.TCPConnector(limit_per_host=20, ttl_dns_cache=300)
     async with aiohttp.ClientSession(connector=connector) as session:
         while True:
-            elapsed_time = time.time() - START_TIMESTAMP
-            if elapsed_time >= TOTAL_RUN_TIME_LIMIT:
-                logging.info("⏱️ Time limit reached. Shutting down event loop context safely.")
-                break 
-
             try:
                 tasks = [check_rpc_with_circuit_breaker(session, url) for url in ACTIVE_RPC_POOL]
                 results = await asyncio.gather(*tasks)
+                
                 latest_data = {res["url"]: res for res in results if res is not None}
+                global_node_data = latest_data 
                 
                 if not latest_data:
-                    write_persistent_log("All Testnet nodes offline. Failing over to disaster recovery array.")
+                    emit_log("⚠️ [FATAL] All Testnet nodes offline. Engaging failover array.")
                     ACTIVE_RPC_POOL = list(PRIMARY_RPC_ENDPOINTS + FALLBACK_RPC_ENDPOINTS)
-                    await asyncio.sleep(10)
+                    await asyncio.sleep(5)
                     continue
                 
                 if len(latest_data) >= 2:
                     max_height = max([info["height"] for info in latest_data.values()])
-                    
                     for url, info in latest_data.items():
-                        node_drift = max_height - info["height"]
-                        if node_drift >= MAX_DRIFT_THRESHOLD:
-                            write_persistent_log(f"Testnet drift detected on {url}: Behind by {node_drift} blocks")
-                            await send_discord_alert(session, "NODE_DRIFT_ALERT", f"Lagging: {url}")
-
-                    seen_hashes = {}
-                    for url, info in latest_data.items():
-                        seen_hashes.setdefault(info["height"], []).append(info["hash"])
-                    
-                    for h, hashes in seen_hashes.items():
-                        if len(hashes) >= 2 and len(set(hashes)) > 1:
-                            await send_discord_alert(session, "CHAIN_FORK_ALERT", f"Testnet Fork at Block {h}!")
-
-                # Strict Dashboard Outputs: Clean verified online state telemetry only
-                for url, data in latest_data.items():
-                    logging.info(f"🟩 [ONLINE] {url} | Block: {data['height']} | Gas: {data['gas_testnet']} Gwei")
-                    if data['gas_testnet'] > GAS_ALERT_THRESHOLD_GWEI:
-                        logging.warning(f"💵 [GAS SPIKE] Anomaly detected on Testnet: {data['gas_testnet']} Gwei")
-
-                time_left_mins = int((TOTAL_RUN_TIME_LIMIT - elapsed_time) / 60)
-                print(f"🔄 Execution State Active | Context Remaining: {time_left_mins} Mins")
-                print("-" * 90) # Standard Clean Separation Line
-                await asyncio.sleep(10) 
+                        if (max_height - info["height"]) >= MAX_DRIFT_THRESHOLD:
+                            emit_log(f"⚠️ [DRIFT] {url} lagging by {max_height - info['height']} blocks.")
                 
-            except Exception as loop_error:
-                write_persistent_log(f"Testnet monitoring kernel loop failure: {str(loop_error)}")
+                for url, data in latest_data.items():
+                    perf_indicator = "🟢" if data['latency'] < HIGH_LATENCY_THRESHOLD_MS else "🟠"
+                    emit_log(f"INFO | {perf_indicator} [ONLINE] {url} | Block: {data['height']} | Ping: {data['latency']}ms | Gas: {data['gas']} Gwei")
+                    
+                    if data['latency'] > HIGH_LATENCY_THRESHOLD_MS:
+                        emit_log(f"WARNING | 🐢 High Latency Detected on {url}: {data['latency']}ms")
+                    
+                emit_log("-" * 80)
+                await asyncio.sleep(10)
+                
+            except Exception as e:
+                emit_log(f"🔴 [ERROR] Loop exception: {str(e)}")
                 await asyncio.sleep(5)
 
-if __name__ == "__main__":
-    try: 
-        asyncio.run(monitor_network())
-    except KeyboardInterrupt: 
-        print("\n🛑 Testnet tracking context detached cleanly by user command.")
+# =======================================================================
+# TELEGRAM BOT POLLING (BACKGROUND THREAD)
+# =======================================================================
+def telegram_polling():
+    if TELEGRAM_BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN_HERE": return
+    last_update_id = 0
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={last_update_id + 1}&timeout=10"
+            resp = requests.get(url, timeout=15).json()
+            if resp.get("ok"):
+                for update in resp["result"]:
+                    last_update_id = update["update_id"]
+                    msg = update.get("message", {}).get("text", "")
+                    if msg == "/status":
+                        status_text = "⚡ **ARC Testnet Status**\n\n"
+                        for node, data in global_node_data.items():
+                            status_text += f"🔗 {node}\n📦 Block: {data['height']}\n⏱ Ping: {data['latency']}ms\n\n"
+                        send_telegram_message(status_text)
+        except Exception: pass
+        time.sleep(2)
+
+def start_background_tasks():
+    init_db()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    threading.Thread(target=telegram_polling, daemon=True).start()
+    loop.run_until_complete(monitor_network())
+
+threading.Thread(target=start_background_tasks, daemon=True).start()
+
+# =======================================================================
+# FLASK WEB SERVER & API ROUTES
+# =======================================================================
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ARC Testnet Sentinel</title>
+    <style>
+        body { background-color: #050505; color: #ffcc00; font-family: 'Courier New', monospace; padding: 20px; font-size: 14px;}
+        .header { border-bottom: 1px solid #ffcc00; padding-bottom: 10px; margin-bottom: 15px;}
+        #console { white-space: pre-wrap; line-height: 1.5; color: #ffffff;}
+    </style>
+</head>
+<body>
+    <div class="header">
+        ⚡ ARC TESTNET SENTINEL INFRASTRUCTURE v3.0<br>
+        SYSTEM: API ACTIVE | PROXY LOAD BALANCER ACTIVE | DATABASE CONNECTED<br>
+    </div>
+    <div id="console">Booting core modules...<br></div>
+    <script>
+        const consoleDiv = document.getElementById('console');
+        const eventSource = new EventSource('/stream');
+        eventSource.onmessage = function(event) {
+            consoleDiv.innerHTML += event.data + "<br>";
+            window.scrollTo(0, document.body.scrollHeight);
+        };
+    </script>
+</body>
+</html>
+"""
+
+@app.route('/')
+def index():
+    return HTML_TEMPLATE
+
+@app.route('/stream')
+def stream():
+    def generate_logs():
+        while True:
+            try: yield f"data: {log_queue.get(timeout=2)}\n\n"
+            except queue.Empty: yield f"data: \n\n"
+    return Response(generate_logs(), mimetype='text/event-stream')
+
+# Feature 1: Public JSON API Endpoint
+@app.route('/api/health', methods=['GET'])
+def api_health():
+    return jsonify({
+        "network": "Arc Testnet",
+        "timestamp": time.time(),
+        "active_nodes": len(global_node_data),
+        "nodes": global_node_data
+    })
+
+# Feature 2: Dynamic Proxy Load Balancer
+@app.route('/rpc', methods=['POST'])
+def proxy_balancer():
+    if not global_node_data:
+        return jsonify({"error": "No healthy testnet nodes available"}), 503
+    
+    best_node = min(global_node_data.values(), key=lambda x: x['latency'])
+    target_url = best_node['url']
+    
+    try:
+        resp = requests.post(target_url, json=request.json, timeout=5)
+        return jsonify(resp.json()), resp.status_code
+    except Exception as e:
+        return jsonify({"error": "Proxy routing failed", "details": str(e)}), 502
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
