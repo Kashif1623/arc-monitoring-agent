@@ -10,6 +10,7 @@ from flask import Flask, jsonify, request
 # CONFIGURATION & GLOBAL STATE (ARC MAINNET)
 # ==========================================
 PRIMARY_RPC_ENDPOINTS = [
+    "https://rpc.mainnet.arc.io",
     "https://arc.drpc.org"
 ]
 
