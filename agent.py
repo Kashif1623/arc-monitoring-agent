@@ -178,7 +178,7 @@ def index():
 
 @app.route("/api/data")
 def api_data():
-    with logs_logs := logs_list:
+    with logs_lock:
         current_logs = list(logs_list)
     return jsonify({
         "nodes": global_node_data,
