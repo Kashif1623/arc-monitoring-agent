@@ -10,7 +10,6 @@ from flask import Flask, jsonify, request
 # CONFIGURATION & GLOBAL STATE (ARC MAINNET)
 # ==========================================
 PRIMARY_RPC_ENDPOINTS = [
-    "https://rpc.arc.network",
     "https://arc.drpc.org"
 ]
 
@@ -125,7 +124,6 @@ def telegram_listener():
             time.sleep(5)
         time.sleep(1)
 
-# Start background threads directly without any faulty locking
 threading.Thread(target=monitor_worker, daemon=True).start()
 threading.Thread(target=telegram_listener, daemon=True).start()
 log_msg("Background threads spawned successfully.")
@@ -167,7 +165,7 @@ def index():
                             }
                         }
                         document.getElementById('status').innerHTML = statusHtml;
-                        document.getElementById('logs'].textContent = data.logs.join('\\n');
+                        document.getElementById('logs').textContent = data.logs.join('\\n');
                     })
                     .catch(err => console.log(err));
             }
@@ -180,7 +178,7 @@ def index():
 
 @app.route("/api/data")
 def api_data():
-    with logs_lock:
+    with logs_logs := logs_list:
         current_logs = list(logs_list)
     return jsonify({
         "nodes": global_node_data,
