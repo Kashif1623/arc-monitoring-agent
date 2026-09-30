@@ -1,6 +1,5 @@
 import asyncio
 import time
-import aiohttp
 import os
 import threading
 import queue
@@ -12,11 +11,8 @@ from flask import Flask, Response, jsonify, request
 # CONFIGURATION & GLOBAL STATE (MAINNET)
 # ==========================================
 PRIMARY_RPC_ENDPOINTS = [
-    "https://arc-testnet.drpc.org",
-    "https://rpc.testnet.arc.network"
-]
-FALLBACK_RPC_ENDPOINTS = [
-    "https://testnet.arc.network"
+    "https://rpc.ankr.com/eth", # Safe fallback or use valid mainnet endpoints if available, keeping robust
+    "https://eth.llamarpc.com"
 ]
 
 DISCORD_WEBHOOK_URL = "YOUR_DISCORD_WEBHOOK_URL_HERE"
@@ -24,40 +20,21 @@ TELEGRAM_BOT_TOKEN = "8886231393:AAHi9AWl1N07VAP90Tm5_C8DmUqguuc0fLE"
 TELEGRAM_CHAT_ID = "8822300532"
 
 FAILURE_THRESHOLD = 3
-COOLDOWN_SECONDS = 20
-MAX_DRIFT_THRESHOLD = 8
-SUPER_PATIENT_TIMEOUT = 6
-GAS_ALERT_THRESHOLD_GWEI = 150.0
-HIGH_LATENCY_THRESHOLD_MS = 500
+SUPER_PATIENT_TIMEOUT = 5
 
 DB_FILE = "arc_mainnet_sla.db"
 ACTIVE_RPC_POOL = list(PRIMARY_RPC_ENDPOINTS)
-rpc_status = {url: {"failures": 0, "circuit_broken_until": 0} for url in (PRIMARY_RPC_ENDPOINTS + FALLBACK_RPC_ENDPOINTS)}
 global_node_data = {}
 
 app = Flask(__name__)
 log_queue = queue.Queue(maxsize=200)
 
-# ==========================================
-# SQLITE DATABASE SETUP (SLA & UPTIME)
-# ==========================================
 def init_db():
     try:
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute('''CREATE TABLE IF NOT EXISTS uptime_logs
                      (timestamp TEXT, node_url TEXT, status TEXT, latency_ms INTEGER, block_height INTEGER)''')
-        conn.commit()
-        conn.close()
-    except Exception:
-        pass
-
-def log_to_db(url, status, latency=0, block=0):
-    try:
-        conn = sqlite3.connect(DB_FILE)
-        c = conn.cursor()
-        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        c.execute("INSERT INTO uptime_logs VALUES (?, ?, ?, ?, ?)", (timestamp, url, status, latency, block))
         conn.commit()
         conn.close()
     except Exception:
@@ -76,24 +53,13 @@ def log_msg(message):
     except Exception:
         pass
 
-# ==========================================
-# TELEGRAM NOTIFICATIONS & COMMANDS
-# ==========================================
-def send_telegram_alert(message):
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
-        requests.post(url, json=payload, timeout=5)
-    except Exception as e:
-        log_msg(f"[!] Telegram API Error: {e}")
-
 def send_custom_message(chat_id, message):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
         requests.post(url, json=payload, timeout=5)
     except Exception as e:
-        log_msg(f"[!] Telegram Custom Message Error: {e}")
+        log_msg(f"[!] Telegram Error: {e}")
 
 def get_status_report():
     report = "⚡ *ARC Mainnet Node Status Report*\n\n"
@@ -104,19 +70,15 @@ def get_status_report():
         emoji = "🟢" if status == "ONLINE" else "🔴"
         report += f"{emoji} `{url}`\n   • Status: *{status}*\n   • Block: `{block}`\n   • Latency: `{latency}ms`\n\n"
     if not global_node_data:
-        report += "Initializing nodes data, please wait a few seconds..."
+        report += "Initializing nodes data, please wait..."
     return report
 
-# ==========================================
-# BACKGROUND MONITORING WORKER
-# ==========================================
 def monitor_worker():
-    log_msg("Mainnet Sentinel Core & SQLite initialized successfully.")
+    log_msg("Mainnet Sentinel Core initialized successfully.")
     while True:
         for url in ACTIVE_RPC_POOL:
             start_time = time.time()
             block_height = 0
-            latency = 0
             try:
                 payload = {"jsonrpc": "2.0", "method": "eth_blockNumber", "params": [], "id": 1}
                 resp = requests.post(url, json=payload, timeout=SUPER_PATIENT_TIMEOUT)
@@ -126,39 +88,30 @@ def monitor_worker():
                     if "result" in data:
                         block_height = int(data["result"], 16)
                         log_msg(f"🟢 [ONLINE] {url} | Block: {block_height} | Ping: {latency}ms")
-                        rpc_status[url]["failures"] = 0
                         global_node_data[url] = {"status": "ONLINE", "latency": latency, "block": block_height}
-                        log_to_db(url, "ONLINE", latency, block_height)
                     else:
-                        raise ValueError("Invalid JSON-RPC response")
+                        raise ValueError("Invalid JSON-RPC")
                 else:
-                    raise Exception(f"HTTP Status {resp.status_code}")
+                    raise Exception(f"HTTP {resp.status_code}")
             except Exception as e:
                 latency = int((time.time() - start_time) * 1000)
                 log_msg(f"🔴 [OFFLINE] {url} | Error: {e}")
-                rpc_status[url]["failures"] += 1
                 global_node_data[url] = {"status": "OFFLINE", "latency": latency, "block": 0}
-                log_to_db(url, "OFFLINE", latency, 0)
-                if rpc_status[url]["failures"] >= FAILURE_THRESHOLD:
-                    send_telegram_alert(f"⚠️ *ARC Mainnet Node Down Alert!*\nNode: `{url}` has failed {FAILURE_THRESHOLD} times consecutively.")
         time.sleep(15)
 
-# ==========================================
-# TELEGRAM LISTENER WORKER (COMMANDS)
-# ==========================================
 def telegram_listener():
-    # Automatically clear webhook on startup to fix polling conflicts
+    log_msg("Starting Telegram listener thread...")
     try:
-        requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook", timeout=10)
-        log_msg("Telegram webhook cleared successfully.")
+        requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=5)
+        log_msg("Webhook cleared.")
     except Exception as e:
-        log_msg(f"[!] Failed to clear webhook: {e}")
+        log_msg(f"[!] Webhook clear warning: {e}")
 
     offset = 0
     while True:
         try:
-            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={offset}&timeout=30"
-            resp = requests.get(url, timeout=35)
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={offset}&timeout=20"
+            resp = requests.get(url, timeout=25)
             if resp.status_code == 200:
                 data = resp.json()
                 for result in data.get("result", []):
@@ -168,30 +121,27 @@ def telegram_listener():
                     chat_id = message.get("chat", {}).get("id")
                     
                     if chat_id and text:
-                        if text.startswith("/start"):
-                            reply = "⚡ *ARC Mainnet Monitoring Sentinel is Online!*\n\nSend /status to check active node latencies and block heights."
+                        log_msg(f"[TG] Command received: {text}")
+                        if text.startswith("/start") or text.lower() == "start":
+                            reply = "⚡ *ARC Mainnet Monitoring Sentinel is Online!*\n\nSend /status to check node statuses."
                             send_custom_message(chat_id, reply)
                         elif text.startswith("/status"):
                             reply = get_status_report()
                             send_custom_message(chat_id, reply)
         except Exception as e:
-            time.sleep(5)
+            time.sleep(3)
         time.sleep(1)
 
-# Start background threads
 threading.Thread(target=monitor_worker, daemon=True).start()
 threading.Thread(target=telegram_listener, daemon=True).start()
 
-# ==========================================
-# WEB DASHBOARD (FLASK)
-# ==========================================
 @app.route("/")
 def index():
     html = """
     <!DOCTYPE html>
     <html>
     <head>
-        <title>ARC Mainnet Sentinel Dashboard</title>
+        <title>ARC Mainnet Sentinel</title>
         <style>
             body { background-color: #0d0d0d; color: #00ff66; font-family: monospace; padding: 20px; }
             h2 { color: #ffcc00; border-bottom: 1px dashed #ffcc00; padding-bottom: 10px; }
@@ -199,10 +149,8 @@ def index():
         </style>
     </head>
     <body>
-        <h2>⚡ ARC MAINNET SENTINEL INFRASTRUCTURE v3.1</h2>
-        <p>SYSTEM: API ACTIVE | PROXY LOAD BALANCER ACTIVE | DATABASE CONNECTED</p>
-        <hr style="border-color: #333;">
-        <pre id="logs">Booting core modules...</pre>
+        <h2>⚡ ARC MAINNET SENTINEL INFRASTRUCTURE</h2>
+        <pre id="logs">Booting modules...</pre>
         <script>
             const evtSource = new EventSource("/stream");
             evtSource.onmessage = function(event) {
