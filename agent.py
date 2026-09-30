@@ -1,11 +1,10 @@
-import asyncio
 import time
 import os
 import threading
 import queue
 import sqlite3
 import requests
-from flask import Flask, Response, jsonify, request
+from flask import Flask, jsonify, request
 
 # ==========================================
 # CONFIGURATION & GLOBAL STATE (MAINNET)
@@ -15,19 +14,23 @@ PRIMARY_RPC_ENDPOINTS = [
     "https://eth.llamarpc.com"
 ]
 
-DISCORD_WEBHOOK_URL = "YOUR_DISCORD_WEBHOOK_URL_HERE"
 TELEGRAM_BOT_TOKEN = "8996901688:AAHEpEeYGzcMDqMkLBcBwUSou6-ojjoKkgY"
-TELEGRAM_CHAT_ID = "8822300532"
-
-FAILURE_THRESHOLD = 3
-SUPER_PATIENT_TIMEOUT = 3
-
 DB_FILE = "arc_mainnet_sla.db"
 ACTIVE_RPC_POOL = list(PRIMARY_RPC_ENDPOINTS)
 global_node_data = {}
 
 app = Flask(__name__)
-log_queue = queue.Queue(maxsize=200)
+logs_list = []
+logs_lock = threading.Lock()
+
+def log_msg(message):
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    formatted = f"{timestamp} | {message}"
+    print(formatted)
+    with logs_lock:
+        logs_list.append(formatted)
+        if len(logs_list) > 100:
+            logs_list.pop(0)
 
 def init_db():
     try:
@@ -41,19 +44,6 @@ def init_db():
         pass
 
 init_db()
-
-def log_msg(message):
-    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    formatted = f"{timestamp} | {message}"
-    print(formatted)
-    try:
-        if log_queue.full():
-            log_queue.get_nowait()
-        log_queue.put_nowait(formatted)
-    except Exception:
-        pass
-
-# Instant startup log so UI never hangs on Booting modules
 log_msg("Mainnet Sentinel Core initialized successfully.")
 
 def send_custom_message(chat_id, message):
@@ -83,7 +73,7 @@ def monitor_worker():
             block_height = 0
             try:
                 payload = {"jsonrpc": "2.0", "method": "eth_blockNumber", "params": [], "id": 1}
-                resp = requests.post(url, json=payload, timeout=SUPER_PATIENT_TIMEOUT)
+                resp = requests.post(url, json=payload, timeout=5)
                 latency = int((time.time() - start_time) * 1000)
                 if resp.status_code == 200:
                     data = resp.json()
@@ -99,7 +89,7 @@ def monitor_worker():
                 latency = int((time.time() - start_time) * 1000)
                 log_msg(f"🔴 [OFFLINE] {url} | Error: {e}")
                 global_node_data[url] = {"status": "OFFLINE", "latency": latency, "block": 0}
-        time.sleep(10)
+        time.sleep(15)
 
 def telegram_listener():
     log_msg("Starting Telegram listener thread...")
@@ -131,15 +121,22 @@ def telegram_listener():
                             reply = get_status_report()
                             send_custom_message(chat_id, reply)
         except Exception as e:
-            time.sleep(3)
+            time.sleep(5)
         time.sleep(1)
 
-threading.Thread(target=monitor_worker, daemon=True).start()
-threading.Thread(target=telegram_listener, daemon=True).start()
+# Ensure background threads run only once across multiple Gunicorn workers
+LOCK_DIR = "sentinel_worker_lock"
+try:
+    os.mkdir(LOCK_DIR)
+    threading.Thread(target=monitor_worker, daemon=True).start()
+    threading.Thread(target=telegram_listener, daemon=True).start()
+    log_msg("Primary worker spawned background threads.")
+except OSError:
+    log_msg("Background threads already active in another worker.")
 
 @app.route("/")
 def index():
-    html = """
+    return """
     <!DOCTYPE html>
     <html>
     <head>
@@ -147,35 +144,52 @@ def index():
         <style>
             body { background-color: #0d0d0d; color: #00ff66; font-family: monospace; padding: 20px; }
             h2 { color: #ffcc00; border-bottom: 1px dashed #ffcc00; padding-bottom: 10px; }
-            pre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }
+            pre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; background: #111; padding: 15px; border-radius: 5px; }
+            .node-box { background: #161616; padding: 10px; margin-bottom: 10px; border-left: 4px solid #00ff66; }
         </style>
     </head>
     <body>
         <h2>⚡ ARC MAINNET SENTINEL INFRASTRUCTURE</h2>
-        <pre id="logs">Booting modules...</pre>
+        <div id="status">Loading node statuses...</div>
+        <h3>Live Activity Logs:</h3>
+        <pre id="logs">Loading logs...</pre>
         <script>
-            const evtSource = new EventSource("/stream");
-            evtSource.onmessage = function(event) {
-                const logPre = document.getElementById("logs");
-                logPre.textContent += "\\n" + event.data;
-                window.scrollTo(0, document.getElementById("logs").scrollHeight);
-            };
+            function fetchData() {
+                fetch('/api/data')
+                    .then(res => res.json())
+                    .then(data => {
+                        let statusHtml = "<h4>Node Statuses:</h4>";
+                        if (Object.keys(data.nodes).length === 0) {
+                            statusHtml += "<p>Initializing nodes connection...</p>";
+                        } else {
+                            for (let [url, info] of Object.entries(data.nodes)) {
+                                let color = info.status === 'ONLINE' ? '#00ff66' : '#ff3333';
+                                statusHtml += `<div class="node-box" style="border-left-color: ${color}">` +
+                                              `${info.status === 'ONLINE' ? '🟢' : '🔴'} <b>${url}</b><br>` +
+                                              `• Status: <b>${info.status}</b> | Block: <code>${info.block}</code> | Latency: <code>${info.latency}ms</code>` +
+                                              `</div>`;
+                            }
+                        }
+                        document.getElementById('status').innerHTML = statusHtml;
+                        document.getElementById('logs').textContent = data.logs.join('\\n');
+                    })
+                    .catch(err => console.log(err));
+            }
+            fetchData();
+            setInterval(fetchData, 4000);
         </script>
     </body>
     </html>
     """
-    return html
 
-@app.route("/stream")
-def stream():
-    def generate():
-        while True:
-            try:
-                msg = log_queue.get(timeout=10)
-                yield f"data: {msg}\\n\\n"
-            except queue.Empty:
-                yield "data: [ heartbeat ]\\n\\n"
-    return Response(generate(), mimetype="text/event-stream")
+@app.route("/api/data")
+def api_data():
+    with logs_lock:
+        current_logs = list(logs_list)
+    return jsonify({
+        "nodes": global_node_data,
+        "logs": current_logs
+    })
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
