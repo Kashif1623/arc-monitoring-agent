@@ -9,7 +9,7 @@ import requests
 from flask import Flask, Response, jsonify, request
 
 # =======================================================================
-# CONFIGURATION & GLOBAL STATE
+# CONFIGURATION & GLOBAL STATE (MAINNET)
 # =======================================================================
 PRIMARY_RPC_ENDPOINTS = [
     "https://drpc.live", 
@@ -73,7 +73,7 @@ def emit_log(message):
 
 async def send_discord_alert(session, alert_title, details):
     if DISCORD_WEBHOOK_URL == "YOUR_DISCORD_WEBHOOK_URL_HERE": return
-    payload = {"username": "Arc Sentinel Node", "content": f"🚨 **[{alert_title}]**\n{details}\n⏰ **Time:** {time.strftime('%Y-%m-%d %H:%M:%S')}"}
+    payload = {"username": "Arc Mainnet Sentinel Node", "content": f"🚨 **[{alert_title}]**\n{details}\n⏰ **Time:** {time.strftime('%Y-%m-%d %H:%M:%S')}"}
     try: await session.post(DISCORD_WEBHOOK_URL, json=payload, timeout=5)
     except Exception: pass
 
@@ -133,13 +133,13 @@ async def check_rpc_with_circuit_breaker(session, url):
     
     if rpc_status[url]["failures"] >= FAILURE_THRESHOLD:
         rpc_status[url]["circuit_broken_until"] = current_time + COOLDOWN_SECONDS
-        emit_log(f"🔴 [CRITICAL] Node isolated: {url}")
+        emit_log(f"🔴 [CRITICAL] Mainnet Node isolated: {url}")
         await send_discord_alert(session, "NODE_CRASH_ALERT", f"🔴 Mainnet Node Down: {url}")
     return None
 
 async def monitor_network():
     global ACTIVE_RPC_POOL, global_node_data
-    emit_log("INFO | Sentinel Core & SQLite initialized successfully.")
+    emit_log("INFO | Mainnet Sentinel Core & SQLite initialized successfully.")
     
     connector = aiohttp.TCPConnector(limit_per_host=20, ttl_dns_cache=300)
     async with aiohttp.ClientSession(connector=connector) as session:
@@ -149,10 +149,10 @@ async def monitor_network():
                 results = await asyncio.gather(*tasks)
                 
                 latest_data = {res["url"]: res for res in results if res is not None}
-                global_node_data = latest_data # Update global state for API/Proxy
+                global_node_data = latest_data 
                 
                 if not latest_data:
-                    emit_log("⚠️ [FATAL] All nodes offline. Engaging failover array.")
+                    emit_log("⚠️ [FATAL] All Mainnet nodes offline. Engaging failover array.")
                     ACTIVE_RPC_POOL = list(PRIMARY_RPC_ENDPOINTS + FALLBACK_RPC_ENDPOINTS)
                     await asyncio.sleep(5)
                     continue
@@ -190,8 +190,8 @@ def telegram_polling():
             if resp.get("ok"):
                 for update in resp["result"]:
                     last_update_id = update["update_id"]
-                    msg = update.get("message", {}).get("text", "")
-                    if msg == "/status":
+                    msg = update.get("message", {}).get("text", "").strip().lower()
+                    if msg in ["/status", "/start"]:
                         status_text = "⚡ **ARC Mainnet Network Status**\n\n"
                         if global_node_data:
                             for node, data in global_node_data.items():
@@ -210,8 +210,8 @@ def start_background_tasks():
     loop.run_until_complete(monitor_network())
 
 # Safe Thread Startup for Gunicorn & Direct Python execution
-if not any(t.name == "SentinelBackgroundThread" for t in threading.enumerate()):
-    bg_thread = threading.Thread(target=start_background_tasks, daemon=True, name="SentinelBackgroundThread")
+if not any(t.name == "MainnetSentinelBackgroundThread" for t in threading.enumerate()):
+    bg_thread = threading.Thread(target=start_background_tasks, daemon=True, name="MainnetSentinelBackgroundThread")
     bg_thread.start()
 
 # =======================================================================
@@ -223,7 +223,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ARC Sentinel Engine</title>
+    <title>ARC Mainnet Sentinel Engine</title>
     <style>
         body { background-color: #050505; color: #00ffcc; font-family: 'Courier New', monospace; padding: 20px; font-size: 14px;}
         .header { border-bottom: 1px solid #00ffcc; padding-bottom: 10px; margin-bottom: 15px;}
@@ -276,7 +276,6 @@ def proxy_balancer():
     if not global_node_data:
         return jsonify({"error": "No healthy nodes available"}), 503
     
-    # Find node with lowest latency
     best_node = min(global_node_data.values(), key=lambda x: x['latency'])
     target_url = best_node['url']
     
