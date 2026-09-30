@@ -11,12 +11,12 @@ from flask import Flask, Response, jsonify, request
 # CONFIGURATION & GLOBAL STATE (MAINNET)
 # ==========================================
 PRIMARY_RPC_ENDPOINTS = [
-    "https://rpc.ankr.com/eth", # Safe fallback or use valid mainnet endpoints if available, keeping robust
+    "https://rpc.ankr.com/eth",
     "https://eth.llamarpc.com"
 ]
 
 DISCORD_WEBHOOK_URL = "YOUR_DISCORD_WEBHOOK_URL_HERE"
-TELEGRAM_BOT_TOKEN = "8886231393:AAHi9AWl1N07VAP90Tm5_C8DmUqguuc0fLE"
+TELEGRAM_BOT_TOKEN = "8996901688:AAHEpEeYGzcMDqMkLBcBwUSou6-ojjoKkgY"
 TELEGRAM_CHAT_ID = "8822300532"
 
 FAILURE_THRESHOLD = 3
