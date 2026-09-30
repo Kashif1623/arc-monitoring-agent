@@ -147,6 +147,13 @@ def monitor_worker():
 # TELEGRAM LISTENER WORKER (COMMANDS)
 # ==========================================
 def telegram_listener():
+    # Automatically clear webhook on startup to fix polling conflicts
+    try:
+        requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook", timeout=10)
+        log_msg("Telegram webhook cleared successfully.")
+    except Exception as e:
+        log_msg(f"[!] Failed to clear webhook: {e}")
+
     offset = 0
     while True:
         try:
