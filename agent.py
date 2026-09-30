@@ -35,29 +35,35 @@ HIGH_LATENCY_THRESHOLD_MS = 500
 DB_FILE = "arc_network_sla.db"
 ACTIVE_RPC_POOL = list(PRIMARY_RPC_ENDPOINTS)
 rpc_status = {url: {"failures": 0, "circuit_broken_until": 0} for url in (PRIMARY_RPC_ENDPOINTS + FALLBACK_RPC_ENDPOINTS)}
-global_node_data = {}  # Stores latest health for API and Proxy Balancing
+global_node_data = {}  
 
 app = Flask(__name__)
-log_queue = queue.Queue(maxsize=500)
+log_queue = queue.Queue(maxsize=200)
 
 # =======================================================================
 # SQLITE DATABASE SETUP (SLA & UPTIME)
 # =======================================================================
 def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS uptime_logs
-                 (timestamp TEXT, node_url TEXT, status TEXT, latency_ms INTEGER, block_height INTEGER)''')
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS uptime_logs
+                     (timestamp TEXT, node_url TEXT, status TEXT, latency_ms INTEGER, block_height INTEGER)''')
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 def log_to_db(url, status, latency=0, block=0):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-    c.execute("INSERT INTO uptime_logs VALUES (?, ?, ?, ?, ?)", (timestamp, url, status, latency, block))
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+        c.execute("INSERT INTO uptime_logs VALUES (?, ?, ?, ?, ?)", (timestamp, url, status, latency, block))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 # =======================================================================
 # CORE LOGGING & ALERTS
@@ -68,12 +74,15 @@ def emit_log(message):
     try:
         log_queue.put_nowait(formatted_msg)
     except queue.Full:
-        log_queue.get() 
-        log_queue.put_nowait(formatted_msg)
+        try:
+            log_queue.get_nowait()
+            log_queue.put_nowait(formatted_msg)
+        except Exception:
+            pass
 
 async def send_discord_alert(session, alert_title, details):
     if DISCORD_WEBHOOK_URL == "YOUR_DISCORD_WEBHOOK_URL_HERE": return
-    payload = {"username": "Arc Mainnet Sentinel Node", "content": f"🚨 **[{alert_title}]**\n{details}\n⏰ **Time:** {time.strftime('%Y-%m-%d %H:%M:%S')}"}
+    payload = {"username": "Arc Mainnet Sentinel", "content": f"🚨 **[{alert_title}]**\n{details}\n⏰ **Time:** {time.strftime('%Y-%m-%d %H:%M:%S')}"}
     try: await session.post(DISCORD_WEBHOOK_URL, json=payload, timeout=5)
     except Exception: pass
 
@@ -106,27 +115,30 @@ async def check_rpc_with_circuit_breaker(session, url):
     block_payload = {"jsonrpc": "2.0", "method": "eth_getBlockByNumber", "params": ["latest", False], "id": 1}
     gas_payload = {"jsonrpc": "2.0", "method": "eth_gasPrice", "params": [], "id": 2}
     
-    res_block_tuple, res_gas_tuple = await asyncio.gather(
-        fetch_json(session, url, block_payload),
-        fetch_json(session, url, gas_payload),
-        return_exceptions=True
-    )
-    
-    if isinstance(res_block_tuple, tuple) and isinstance(res_gas_tuple, tuple):
-        res_block, latency_block = res_block_tuple
-        res_gas, _ = res_gas_tuple
+    try:
+        res_block_tuple, res_gas_tuple = await asyncio.gather(
+            fetch_json(session, url, block_payload),
+            fetch_json(session, url, gas_payload),
+            return_exceptions=True
+        )
         
-        if res_block and res_gas:
-            block_data = res_block.get("result")
-            gas_hex = res_gas.get("result")
+        if isinstance(res_block_tuple, tuple) and isinstance(res_gas_tuple, tuple):
+            res_block, latency_block = res_block_tuple
+            res_gas, _ = res_gas_tuple
             
-            if block_data and "number" in block_data and gas_hex:
-                rpc_status[url]["failures"] = 0  
-                gas_gwei = round(int(gas_hex, 16) / 10**9, 6) 
-                height = int(block_data["number"], 16)
+            if res_block and res_gas:
+                block_data = res_block.get("result")
+                gas_hex = res_gas.get("result")
                 
-                log_to_db(url, "ONLINE", latency_block, height)
-                return {"url": url, "height": height, "hash": block_data["hash"], "gas": gas_gwei, "latency": latency_block}
+                if block_data and "number" in block_data and gas_hex:
+                    rpc_status[url]["failures"] = 0  
+                    gas_gwei = round(int(gas_hex, 16) / 10**9, 6) 
+                    height = int(block_data["number"], 16)
+                    
+                    log_to_db(url, "ONLINE", latency_block, height)
+                    return {"url": url, "height": height, "hash": block_data["hash"], "gas": gas_gwei, "latency": latency_block}
+    except Exception:
+        pass
 
     rpc_status[url]["failures"] += 1
     log_to_db(url, "OFFLINE", 0, 0)
@@ -141,7 +153,7 @@ async def monitor_network():
     global ACTIVE_RPC_POOL, global_node_data
     emit_log("INFO | Mainnet Sentinel Core & SQLite initialized successfully.")
     
-    connector = aiohttp.TCPConnector(limit_per_host=20, ttl_dns_cache=300)
+    connector = aiohttp.TCPConnector(limit_per_host=10, ttl_dns_cache=300)
     async with aiohttp.ClientSession(connector=connector) as session:
         while True:
             try:
@@ -157,36 +169,26 @@ async def monitor_network():
                     await asyncio.sleep(5)
                     continue
                 
-                if len(latest_data) >= 2:
-                    max_height = max([info["height"] for info in latest_data.values()])
-                    for url, info in latest_data.items():
-                        if (max_height - info["height"]) >= MAX_DRIFT_THRESHOLD:
-                            emit_log(f"⚠️ [DRIFT] {url} lagging by {max_height - info['height']} blocks.")
-                
                 for url, data in latest_data.items():
                     perf_indicator = "🟢" if data['latency'] < HIGH_LATENCY_THRESHOLD_MS else "🟠"
                     emit_log(f"INFO | {perf_indicator} [ONLINE] {url} | Block: {data['height']} | Ping: {data['latency']}ms | Gas: {data['gas']} Gwei")
-                    
-                    if data['latency'] > HIGH_LATENCY_THRESHOLD_MS:
-                        emit_log(f"WARNING | 🐢 High Latency Detected on {url}: {data['latency']}ms")
-                    
-                emit_log("-" * 80)
-                await asyncio.sleep(10)
+                
+                await asyncio.sleep(15)
                 
             except Exception as e:
                 emit_log(f"🔴 [ERROR] Loop exception: {str(e)}")
                 await asyncio.sleep(5)
 
 # =======================================================================
-# TELEGRAM BOT POLLING (BACKGROUND THREAD VIA GUNICORN SAFE METHOD)
+# TELEGRAM BOT POLLING (BACKGROUND THREAD)
 # =======================================================================
 def telegram_polling():
     if TELEGRAM_BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN_HERE": return
     last_update_id = 0
     while True:
         try:
-            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={last_update_id + 1}&timeout=10"
-            resp = requests.get(url, timeout=15).json()
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={last_update_id + 1}&timeout=5"
+            resp = requests.get(url, timeout=10).json()
             if resp.get("ok"):
                 for update in resp["result"]:
                     last_update_id = update["update_id"]
@@ -199,17 +201,21 @@ def telegram_polling():
                         else:
                             status_text += "⚠️ Nodes initializing or temporarily offline.\n"
                         send_telegram_message(status_text)
-        except Exception: pass
-        time.sleep(2)
+        except Exception: 
+            pass
+        time.sleep(3)
 
 def start_background_tasks():
     init_db()
+    threading.Thread(target=telegram_polling, daemon=True).start()
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    threading.Thread(target=telegram_polling, daemon=True).start()
-    loop.run_until_complete(monitor_network())
+    try:
+        loop.run_until_complete(monitor_network())
+    except Exception:
+        pass
 
-# Safe Thread Startup for Gunicorn & Direct Python execution
+# Safe Thread Startup
 if not any(t.name == "MainnetSentinelBackgroundThread" for t in threading.enumerate()):
     bg_thread = threading.Thread(target=start_background_tasks, daemon=True, name="MainnetSentinelBackgroundThread")
     bg_thread.start()
@@ -232,7 +238,7 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="header">
-        ⚡ ARC MAINNET SENTINEL INFRASTRUCTURE v3.0<br>
+        ⚡ ARC MAINNET SENTINEL INFRASTRUCTURE v3.1<br>
         SYSTEM: API ACTIVE | PROXY LOAD BALANCER ACTIVE | DATABASE CONNECTED<br>
     </div>
     <div id="console">Booting core modules...<br></div>
@@ -255,12 +261,17 @@ def index():
 @app.route('/stream')
 def stream():
     def generate_logs():
+        yield "data: Mainnet system connected to live stream.\n\n"
         while True:
-            try: yield f"data: {log_queue.get(timeout=2)}\n\n"
-            except queue.Empty: yield f"data: \n\n"
+            try:
+                msg = log_queue.get(timeout=5)
+                yield f"data: {msg}\n\n"
+            except queue.Empty:
+                yield "data: \n\n"
+            except Exception:
+                break
     return Response(generate_logs(), mimetype='text/event-stream')
 
-# Feature 1: Public JSON API Endpoint
 @app.route('/api/health', methods=['GET'])
 def api_health():
     return jsonify({
@@ -270,17 +281,13 @@ def api_health():
         "nodes": global_node_data
     })
 
-# Feature 2: Dynamic Proxy Load Balancer
 @app.route('/rpc', methods=['POST'])
 def proxy_balancer():
     if not global_node_data:
         return jsonify({"error": "No healthy nodes available"}), 503
-    
     best_node = min(global_node_data.values(), key=lambda x: x['latency'])
-    target_url = best_node['url']
-    
     try:
-        resp = requests.post(target_url, json=request.json, timeout=5)
+        resp = requests.post(best_node['url'], json=request.json, timeout=5)
         return jsonify(resp.json()), resp.status_code
     except Exception as e:
         return jsonify({"error": "Proxy routing failed", "details": str(e)}), 502
