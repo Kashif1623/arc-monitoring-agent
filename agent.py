@@ -125,14 +125,10 @@ def telegram_listener():
             time.sleep(5)
         time.sleep(1)
 
-LOCK_DIR = "sentinel_worker_lock"
-try:
-    os.mkdir(LOCK_DIR)
-    threading.Thread(target=monitor_worker, daemon=True).start()
-    threading.Thread(target=telegram_listener, daemon=True).start()
-    log_msg("Primary worker spawned background threads.")
-except OSError:
-    log_msg("Background threads already active in another worker.")
+# Start background threads directly without any faulty locking
+threading.Thread(target=monitor_worker, daemon=True).start()
+threading.Thread(target=telegram_listener, daemon=True).start()
+log_msg("Background threads spawned successfully.")
 
 @app.route("/")
 def index():
@@ -171,7 +167,7 @@ def index():
                             }
                         }
                         document.getElementById('status').innerHTML = statusHtml;
-                        document.getElementById('logs').textContent = data.logs.join('\\n');
+                        document.getElementById('logs'].textContent = data.logs.join('\\n');
                     })
                     .catch(err => console.log(err));
             }
