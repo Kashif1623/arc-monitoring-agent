@@ -10,8 +10,8 @@ from flask import Flask, jsonify, request
 # CONFIGURATION & GLOBAL STATE (ARC MAINNET)
 # ==========================================
 PRIMARY_RPC_ENDPOINTS = [
-    "https://rpc.mainnet.arc.io",
-    "https://arc.drpc.org"
+    "https://arc.drpc.org",
+    "https://rpc.mainnet.arc.io"
 ]
 
 TELEGRAM_BOT_TOKEN = "8996901688:AAHEpEeYGzcMDqMkLBcBwUSou6-ojjoKkgY"
@@ -52,7 +52,7 @@ def send_custom_message(chat_id, message):
         payload = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
         requests.post(url, json=payload, timeout=5)
     except Exception as e:
-        log_msg(f"[!] Telegram Error: {e}")
+        log_msg(f"[!] Telegram Send Error: {e}")
 
 def get_status_report():
     report = "⚡ *ARC Mainnet Node Status Report*\n\n"
@@ -70,6 +70,7 @@ def monitor_worker():
     log_msg("Monitor worker started checking Arc Mainnet nodes...")
     while True:
         for url in ACTIVE_RPC_POOL:
+            log_msg(f"Attempting connection to RPC: {url}")
             start_time = time.time()
             block_height = 0
             try:
@@ -83,28 +84,30 @@ def monitor_worker():
                         log_msg(f"🟢 [ONLINE] {url} | Block: {block_height} | Ping: {latency}ms")
                         global_node_data[url] = {"status": "ONLINE", "latency": latency, "block": block_height}
                     else:
-                        raise ValueError("Invalid JSON-RPC")
+                        log_msg(f"🔴 [INVALID JSON] {url}")
+                        global_node_data[url] = {"status": "OFFLINE", "latency": latency, "block": 0}
                 else:
-                    raise Exception(f"HTTP {resp.status_code}")
+                    log_msg(f"🔴 [HTTP {resp.status_code}] {url}")
+                    global_node_data[url] = {"status": "OFFLINE", "latency": latency, "block": 0}
             except Exception as e:
                 latency = int((time.time() - start_time) * 1000)
-                log_msg(f"🔴 [OFFLINE] {url} | Error: {e}")
+                log_msg(f"🔴 [ERROR] {url} | Exception: {e}")
                 global_node_data[url] = {"status": "OFFLINE", "latency": latency, "block": 0}
         time.sleep(10)
 
 def telegram_listener():
     log_msg("Starting Telegram listener thread...")
     try:
-        requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=5)
-        log_msg("Webhook cleared.")
+        r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=3)
+        log_msg(f"Telegram Webhook cleared successfully (Code: {r.status_code})")
     except Exception as e:
-        log_msg(f"[!] Webhook clear warning: {e}")
+        log_msg(f"[!] Telegram Webhook clear warning: {e}")
 
     offset = 0
     while True:
         try:
-            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={offset}&timeout=20"
-            resp = requests.get(url, timeout=25)
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={offset}&timeout=15"
+            resp = requests.get(url, timeout=20)
             if resp.status_code == 200:
                 data = resp.json()
                 for result in data.get("result", []):
@@ -122,7 +125,8 @@ def telegram_listener():
                             reply = get_status_report()
                             send_custom_message(chat_id, reply)
         except Exception as e:
-            time.sleep(5)
+            # Silent skip for telegram polling timeouts to keep loop alive
+            time.sleep(3)
         time.sleep(1)
 
 threading.Thread(target=monitor_worker, daemon=True).start()
