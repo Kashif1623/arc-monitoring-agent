@@ -20,7 +20,7 @@ TELEGRAM_BOT_TOKEN = "8996901688:AAHEpEeYGzcMDqMkLBcBwUSou6-ojjoKkgY"
 TELEGRAM_CHAT_ID = "8822300532"
 
 FAILURE_THRESHOLD = 3
-SUPER_PATIENT_TIMEOUT = 5
+SUPER_PATIENT_TIMEOUT = 3
 
 DB_FILE = "arc_mainnet_sla.db"
 ACTIVE_RPC_POOL = list(PRIMARY_RPC_ENDPOINTS)
@@ -53,6 +53,9 @@ def log_msg(message):
     except Exception:
         pass
 
+# Instant startup log so UI never hangs on Booting modules
+log_msg("Mainnet Sentinel Core initialized successfully.")
+
 def send_custom_message(chat_id, message):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -74,7 +77,6 @@ def get_status_report():
     return report
 
 def monitor_worker():
-    log_msg("Mainnet Sentinel Core initialized successfully.")
     while True:
         for url in ACTIVE_RPC_POOL:
             start_time = time.time()
@@ -97,7 +99,7 @@ def monitor_worker():
                 latency = int((time.time() - start_time) * 1000)
                 log_msg(f"🔴 [OFFLINE] {url} | Error: {e}")
                 global_node_data[url] = {"status": "OFFLINE", "latency": latency, "block": 0}
-        time.sleep(15)
+        time.sleep(10)
 
 def telegram_listener():
     log_msg("Starting Telegram listener thread...")
@@ -176,4 +178,5 @@ def stream():
     return Response(generate(), mimetype="text/event-stream")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
