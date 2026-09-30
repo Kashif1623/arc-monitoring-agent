@@ -7,11 +7,11 @@ import requests
 from flask import Flask, jsonify, request
 
 # ==========================================
-# CONFIGURATION & GLOBAL STATE (MAINNET)
+# CONFIGURATION & GLOBAL STATE (ARC MAINNET)
 # ==========================================
 PRIMARY_RPC_ENDPOINTS = [
-    "https://rpc.ankr.com/eth",
-    "https://eth.llamarpc.com"
+    "https://rpc.arc.network",
+    "https://arc.drpc.org"
 ]
 
 TELEGRAM_BOT_TOKEN = "8996901688:AAHEpEeYGzcMDqMkLBcBwUSou6-ojjoKkgY"
@@ -44,7 +44,7 @@ def init_db():
         pass
 
 init_db()
-log_msg("Mainnet Sentinel Core initialized successfully.")
+log_msg("Arc Mainnet Sentinel Core initialized successfully.")
 
 def send_custom_message(chat_id, message):
     try:
@@ -67,6 +67,7 @@ def get_status_report():
     return report
 
 def monitor_worker():
+    log_msg("Monitor worker started checking Arc Mainnet nodes...")
     while True:
         for url in ACTIVE_RPC_POOL:
             start_time = time.time()
@@ -89,7 +90,7 @@ def monitor_worker():
                 latency = int((time.time() - start_time) * 1000)
                 log_msg(f"🔴 [OFFLINE] {url} | Error: {e}")
                 global_node_data[url] = {"status": "OFFLINE", "latency": latency, "block": 0}
-        time.sleep(15)
+        time.sleep(10)
 
 def telegram_listener():
     log_msg("Starting Telegram listener thread...")
@@ -124,7 +125,6 @@ def telegram_listener():
             time.sleep(5)
         time.sleep(1)
 
-# Ensure background threads run only once across multiple Gunicorn workers
 LOCK_DIR = "sentinel_worker_lock"
 try:
     os.mkdir(LOCK_DIR)
