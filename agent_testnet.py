@@ -176,7 +176,7 @@ async def monitor_network():
                 await asyncio.sleep(5)
 
 # =======================================================================
-# TELEGRAM BOT POLLING (BACKGROUND THREAD)
+# TELEGRAM BOT POLLING (BACKGROUND THREAD VIA GUNICORN SAFE METHOD)
 # =======================================================================
 def telegram_polling():
     if TELEGRAM_BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN_HERE": return
@@ -188,11 +188,14 @@ def telegram_polling():
             if resp.get("ok"):
                 for update in resp["result"]:
                     last_update_id = update["update_id"]
-                    msg = update.get("message", {}).get("text", "")
-                    if msg == "/status":
+                    msg = update.get("message", {}).get("text", "").strip().lower()
+                    if msg in ["/status", "/start"]:
                         status_text = "⚡ **ARC Testnet Status**\n\n"
-                        for node, data in global_node_data.items():
-                            status_text += f"🔗 {node}\n📦 Block: {data['height']}\n⏱ Ping: {data['latency']}ms\n\n"
+                        if global_node_data:
+                            for node, data in global_node_data.items():
+                                status_text += f"🔗 {node}\n📦 Block: {data['height']}\n⏱ Ping: {data['latency']}ms\n\n"
+                        else:
+                            status_text += "⚠️ Nodes initializing or temporarily offline.\n"
                         send_telegram_message(status_text)
         except Exception: pass
         time.sleep(2)
@@ -204,7 +207,10 @@ def start_background_tasks():
     threading.Thread(target=telegram_polling, daemon=True).start()
     loop.run_until_complete(monitor_network())
 
-threading.Thread(target=start_background_tasks, daemon=True).start()
+# Safe Thread Startup for Gunicorn & Direct Python execution
+if not any(t.name == "TestnetSentinelBackgroundThread" for t in threading.enumerate()):
+    bg_thread = threading.Thread(target=start_background_tasks, daemon=True, name="TestnetSentinelBackgroundThread")
+    bg_thread.start()
 
 # =======================================================================
 # FLASK WEB SERVER & API ROUTES
