@@ -3,15 +3,13 @@ import os
 import threading
 import sqlite3
 import requests
-import socket
 from flask import Flask, jsonify
 
 # ==========================================
 # CONFIGURATION & GLOBAL STATE (ARC MAINNET)
 # ==========================================
 PRIMARY_RPC_ENDPOINTS = [
-    "https://arc.drpc.org",
-    "https://rpc.mainnet.arc.io"
+    "https://arc.drpc.org"
 ]
 
 TELEGRAM_BOT_TOKEN = "8996901688:AAHEpEeYGzcMDqMkLBcBwUSou6-ojjoKkgY"
@@ -19,7 +17,6 @@ DB_FILE = "arc_mainnet_sla.db"
 ACTIVE_RPC_POOL = list(PRIMARY_RPC_ENDPOINTS)
 global_node_data = {}
 logs_list = []
-logs_lock = threading.Lock()
 
 app = Flask(__name__)
 
@@ -27,10 +24,9 @@ def log_msg(message):
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     formatted = f"{timestamp} | {message}"
     print(formatted)
-    with logs_lock:
-        logs_list.append(formatted)
-        if len(logs_list) > 100:
-            logs_list.pop(0)
+    logs_list.append(formatted)
+    if len(logs_list) > 100:
+        logs_list.pop(0)
 
 def init_db():
     try:
@@ -66,11 +62,9 @@ def get_status_report():
     return report
 
 def monitor_worker():
-    time.sleep(1) # Stagger startup to prevent deadlock
     log_msg("Monitor worker started successfully (Mainnet)!")
     while True:
         for url in ACTIVE_RPC_POOL:
-            log_msg(f"Fetching Mainnet RPC: {url}")
             start_time = time.time()
             try:
                 payload = {"jsonrpc": "2.0", "method": "eth_blockNumber", "params": [], "id": 1}
@@ -88,12 +82,11 @@ def monitor_worker():
                     global_node_data[url] = {"status": "OFFLINE", "latency": latency, "block": 0}
             except Exception as e:
                 latency = int((time.time() - start_time) * 1000)
-                log_msg(f"🔴 [TIMEOUT/OFFLINE] {url} | Error: {e}")
+                log_msg(f"🔴 [OFFLINE] {url}")
                 global_node_data[url] = {"status": "OFFLINE", "latency": latency, "block": 0}
         time.sleep(10)
 
 def telegram_listener():
-    time.sleep(2) # Stagger startup to prevent Telegram API conflict
     log_msg("Telegram listener started successfully (Mainnet)!")
     try:
         requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=5)
@@ -120,22 +113,14 @@ def telegram_listener():
                             send_custom_message(chat_id, "⚡ *ARC Mainnet Monitoring Sentinel is Online!*\n\nSend /status to check node statuses.")
                         elif text.startswith("/status"):
                             send_custom_message(chat_id, get_status_report())
-            else:
-                log_msg(f"[TG] API Conflict or Error: HTTP {resp.status_code}")
-        except Exception as e:
-            time.sleep(2)
+        except Exception:
+            time.sleep(3)
         time.sleep(1)
 
-# === BULLETPROOF SINGLETON LOCK ===
-# Prevents duplicate bots from fighting each other when Gunicorn spawns multiple workers.
-try:
-    worker_lock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    worker_lock.bind(("127.0.0.1", 11223))
-    log_msg("Master worker lock acquired. Booting threads...")
-    threading.Thread(target=monitor_worker, daemon=True).start()
-    threading.Thread(target=telegram_listener, daemon=True).start()
-except socket.error:
-    log_msg("Secondary worker detected. Skipping thread spawn.")
+# Simple threads just like the successful testnet setup
+threading.Thread(target=monitor_worker, daemon=True).start()
+threading.Thread(target=telegram_listener, daemon=True).start()
+log_msg("Background threads spawned successfully.")
 
 @app.route("/")
 def index():
@@ -187,11 +172,9 @@ def index():
 
 @app.route("/api/data")
 def api_data():
-    with logs_lock:
-        current_logs = list(logs_list)
     return jsonify({
         "nodes": global_node_data,
-        "logs": current_logs
+        "logs": list(logs_list)
     })
 
 if __name__ == "__main__":
