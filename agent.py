@@ -1,10 +1,9 @@
 import time
 import os
 import threading
-import queue
 import sqlite3
 import requests
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify
 
 # ==========================================
 # CONFIGURATION & GLOBAL STATE (ARC MAINNET)
@@ -18,19 +17,17 @@ TELEGRAM_BOT_TOKEN = "8996901688:AAHEpEeYGzcMDqMkLBcBwUSou6-ojjoKkgY"
 DB_FILE = "arc_mainnet_sla.db"
 ACTIVE_RPC_POOL = list(PRIMARY_RPC_ENDPOINTS)
 global_node_data = {}
+logs_list = []
 
 app = Flask(__name__)
-logs_list = []
-logs_lock = threading.Lock()
 
 def log_msg(message):
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     formatted = f"{timestamp} | {message}"
     print(formatted)
-    with logs_lock:
-        logs_list.append(formatted)
-        if len(logs_list) > 100:
-            logs_list.pop(0)
+    logs_list.append(formatted)
+    if len(logs_list) > 100:
+        logs_list.pop(0)
 
 def init_db():
     try:
@@ -49,21 +46,20 @@ def send_custom_message(chat_id, message):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
-        # Added slightly longer timeout for reliable sending
-        requests.post(url, json=payload, timeout=(3, 10))
+        requests.post(url, json=payload, timeout=5)
     except Exception as e:
         log_msg(f"[!] Telegram Send Error: {e}")
 
 def get_status_report():
     report = "⚡ *ARC Mainnet Node Status Report*\n\n"
+    if not global_node_data:
+        return report + "Initializing nodes data, please wait..."
     for url, data in global_node_data.items():
         status = data.get("status", "UNKNOWN")
         block = data.get("block", 0)
         latency = data.get("latency", 0)
         emoji = "🟢" if status == "ONLINE" else "🔴"
         report += f"{emoji} `{url}`\n   • Status: *{status}*\n   • Block: `{block}`\n   • Latency: `{latency}ms`\n\n"
-    if not global_node_data:
-        report += "Initializing nodes data, please wait..."
     return report
 
 def monitor_worker():
@@ -72,11 +68,10 @@ def monitor_worker():
         for url in ACTIVE_RPC_POOL:
             log_msg(f"Fetching Mainnet RPC: {url}")
             start_time = time.time()
-            block_height = 0
             try:
                 payload = {"jsonrpc": "2.0", "method": "eth_blockNumber", "params": [], "id": 1}
-                # Prevent connection hang with explicit timeout
-                resp = requests.post(url, json=payload, timeout=(3, 7))
+                # Hard timeout to prevent GIL lock
+                resp = requests.post(url, json=payload, timeout=3)
                 latency = int((time.time() - start_time) * 1000)
                 if resp.status_code == 200:
                     data = resp.json()
@@ -97,7 +92,7 @@ def monitor_worker():
 def telegram_listener():
     log_msg("Telegram listener started successfully (Mainnet)!")
     try:
-        requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=(3, 5))
+        requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=3)
         log_msg("Webhook cleared successfully.")
     except Exception:
         pass
@@ -105,9 +100,8 @@ def telegram_listener():
     offset = 0
     while True:
         try:
-            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={offset}&timeout=15"
-            # Reliable timeout tuple to prevent thread lock
-            resp = requests.get(url, timeout=(3, 25))
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={offset}&timeout=10"
+            resp = requests.get(url, timeout=12)
             if resp.status_code == 200:
                 data = resp.json()
                 for result in data.get("result", []):
@@ -119,22 +113,17 @@ def telegram_listener():
                     if chat_id and text:
                         log_msg(f"[TG] Command received: {text}")
                         if text.startswith("/start") or text.lower() == "start":
-                            reply = "⚡ *ARC Mainnet Monitoring Sentinel is Online!*\n\nSend /status to check node statuses."
-                            send_custom_message(chat_id, reply)
+                            send_custom_message(chat_id, "⚡ *ARC Mainnet Monitoring Sentinel is Online!*\n\nSend /status to check node statuses.")
                         elif text.startswith("/status"):
-                            reply = get_status_report()
-                            send_custom_message(chat_id, reply)
+                            send_custom_message(chat_id, get_status_report())
         except Exception:
-            # Silent skip on polling timeout
-            time.sleep(3)
+            time.sleep(2)
         time.sleep(1)
 
-# 🔥 ABSOLUTE FIX: Start threads globally regardless of Gunicorn, using environment guard to prevent double-spawn
-if not os.environ.get('THREADS_STARTED'):
-    os.environ['THREADS_STARTED'] = '1'
-    log_msg("Booting background threads directly...")
-    threading.Thread(target=monitor_worker, daemon=True).start()
-    threading.Thread(target=telegram_listener, daemon=True).start()
+# Start threads independently
+threading.Thread(target=monitor_worker, daemon=True).start()
+threading.Thread(target=telegram_listener, daemon=True).start()
+log_msg("Booting background threads directly...")
 
 @app.route("/")
 def index():
@@ -186,11 +175,9 @@ def index():
 
 @app.route("/api/data")
 def api_data():
-    with logs_lock:
-        current_logs = list(logs_list)
     return jsonify({
         "nodes": global_node_data,
-        "logs": current_logs
+        "logs": list(logs_list)
     })
 
 if __name__ == "__main__":
