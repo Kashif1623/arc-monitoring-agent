@@ -44,13 +44,13 @@ def init_db():
         pass
 
 init_db()
-log_msg("Arc Mainnet Sentinel Core initialized successfully.")
 
 def send_custom_message(chat_id, message):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
-        requests.post(url, json=payload, timeout=5)
+        # Added slightly longer timeout for reliable sending
+        requests.post(url, json=payload, timeout=(3, 10))
     except Exception as e:
         log_msg(f"[!] Telegram Send Error: {e}")
 
@@ -67,15 +67,16 @@ def get_status_report():
     return report
 
 def monitor_worker():
-    log_msg("Monitor worker started checking Arc Mainnet nodes...")
+    log_msg("Monitor worker started successfully (Mainnet)!")
     while True:
         for url in ACTIVE_RPC_POOL:
-            log_msg(f"Attempting connection to RPC: {url}")
+            log_msg(f"Fetching Mainnet RPC: {url}")
             start_time = time.time()
             block_height = 0
             try:
                 payload = {"jsonrpc": "2.0", "method": "eth_blockNumber", "params": [], "id": 1}
-                resp = requests.post(url, json=payload, timeout=5)
+                # Prevent connection hang with explicit timeout
+                resp = requests.post(url, json=payload, timeout=(3, 7))
                 latency = int((time.time() - start_time) * 1000)
                 if resp.status_code == 200:
                     data = resp.json()
@@ -84,30 +85,29 @@ def monitor_worker():
                         log_msg(f"🟢 [ONLINE] {url} | Block: {block_height} | Ping: {latency}ms")
                         global_node_data[url] = {"status": "ONLINE", "latency": latency, "block": block_height}
                     else:
-                        log_msg(f"🔴 [INVALID JSON] {url}")
                         global_node_data[url] = {"status": "OFFLINE", "latency": latency, "block": 0}
                 else:
-                    log_msg(f"🔴 [HTTP {resp.status_code}] {url}")
                     global_node_data[url] = {"status": "OFFLINE", "latency": latency, "block": 0}
             except Exception as e:
                 latency = int((time.time() - start_time) * 1000)
-                log_msg(f"🔴 [ERROR] {url} | Exception: {e}")
+                log_msg(f"🔴 [TIMEOUT/OFFLINE] {url}")
                 global_node_data[url] = {"status": "OFFLINE", "latency": latency, "block": 0}
         time.sleep(10)
 
 def telegram_listener():
-    log_msg("Starting Telegram listener thread...")
+    log_msg("Telegram listener started successfully (Mainnet)!")
     try:
-        r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=3)
-        log_msg(f"Telegram Webhook cleared successfully (Code: {r.status_code})")
-    except Exception as e:
-        log_msg(f"[!] Telegram Webhook clear warning: {e}")
+        requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=(3, 5))
+        log_msg("Webhook cleared successfully.")
+    except Exception:
+        pass
 
     offset = 0
     while True:
         try:
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={offset}&timeout=15"
-            resp = requests.get(url, timeout=20)
+            # Reliable timeout tuple to prevent thread lock
+            resp = requests.get(url, timeout=(3, 25))
             if resp.status_code == 200:
                 data = resp.json()
                 for result in data.get("result", []):
@@ -124,14 +124,17 @@ def telegram_listener():
                         elif text.startswith("/status"):
                             reply = get_status_report()
                             send_custom_message(chat_id, reply)
-        except Exception as e:
-            # Silent skip for telegram polling timeouts to keep loop alive
+        except Exception:
+            # Silent skip on polling timeout
             time.sleep(3)
         time.sleep(1)
 
-threading.Thread(target=monitor_worker, daemon=True).start()
-threading.Thread(target=telegram_listener, daemon=True).start()
-log_msg("Background threads spawned successfully.")
+# 🔥 ABSOLUTE FIX: Start threads globally regardless of Gunicorn, using environment guard to prevent double-spawn
+if not os.environ.get('THREADS_STARTED'):
+    os.environ['THREADS_STARTED'] = '1'
+    log_msg("Booting background threads directly...")
+    threading.Thread(target=monitor_worker, daemon=True).start()
+    threading.Thread(target=telegram_listener, daemon=True).start()
 
 @app.route("/")
 def index():
