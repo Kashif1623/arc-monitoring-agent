@@ -184,6 +184,13 @@ async def monitor_network():
 # =======================================================================
 def telegram_polling():
     if TELEGRAM_BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN_HERE": return
+    
+    # Clear any active webhooks to prevent 409 conflicts
+    try:
+        requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook", timeout=5)
+    except Exception:
+        pass
+
     last_update_id = 0
     while True:
         try:
@@ -201,8 +208,10 @@ def telegram_polling():
                         else:
                             status_text += "⚠️ Nodes initializing or temporarily offline.\n"
                         send_telegram_message(status_text)
-        except Exception: 
-            pass
+            else:
+                emit_log(f"⚠️ Telegram API Warning: {resp}")
+        except Exception as e: 
+            emit_log(f"🔴 Telegram Polling Error: {str(e)}")
         time.sleep(3)
 
 def start_background_tasks():
