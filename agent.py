@@ -3,6 +3,7 @@ import os
 import threading
 import sqlite3
 import requests
+import socket
 from flask import Flask, jsonify
 
 # ==========================================
@@ -18,6 +19,7 @@ DB_FILE = "arc_mainnet_sla.db"
 ACTIVE_RPC_POOL = list(PRIMARY_RPC_ENDPOINTS)
 global_node_data = {}
 logs_list = []
+logs_lock = threading.Lock()
 
 app = Flask(__name__)
 
@@ -25,9 +27,10 @@ def log_msg(message):
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     formatted = f"{timestamp} | {message}"
     print(formatted)
-    logs_list.append(formatted)
-    if len(logs_list) > 100:
-        logs_list.pop(0)
+    with logs_lock:
+        logs_list.append(formatted)
+        if len(logs_list) > 100:
+            logs_list.pop(0)
 
 def init_db():
     try:
@@ -63,6 +66,7 @@ def get_status_report():
     return report
 
 def monitor_worker():
+    time.sleep(1) # Stagger startup to prevent deadlock
     log_msg("Monitor worker started successfully (Mainnet)!")
     while True:
         for url in ACTIVE_RPC_POOL:
@@ -70,8 +74,7 @@ def monitor_worker():
             start_time = time.time()
             try:
                 payload = {"jsonrpc": "2.0", "method": "eth_blockNumber", "params": [], "id": 1}
-                # Hard timeout to prevent GIL lock
-                resp = requests.post(url, json=payload, timeout=3)
+                resp = requests.post(url, json=payload, timeout=5)
                 latency = int((time.time() - start_time) * 1000)
                 if resp.status_code == 200:
                     data = resp.json()
@@ -85,14 +88,15 @@ def monitor_worker():
                     global_node_data[url] = {"status": "OFFLINE", "latency": latency, "block": 0}
             except Exception as e:
                 latency = int((time.time() - start_time) * 1000)
-                log_msg(f"🔴 [TIMEOUT/OFFLINE] {url}")
+                log_msg(f"🔴 [TIMEOUT/OFFLINE] {url} | Error: {e}")
                 global_node_data[url] = {"status": "OFFLINE", "latency": latency, "block": 0}
         time.sleep(10)
 
 def telegram_listener():
+    time.sleep(2) # Stagger startup to prevent Telegram API conflict
     log_msg("Telegram listener started successfully (Mainnet)!")
     try:
-        requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=3)
+        requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pending_updates=true", timeout=5)
         log_msg("Webhook cleared successfully.")
     except Exception:
         pass
@@ -101,7 +105,7 @@ def telegram_listener():
     while True:
         try:
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={offset}&timeout=10"
-            resp = requests.get(url, timeout=12)
+            resp = requests.get(url, timeout=15)
             if resp.status_code == 200:
                 data = resp.json()
                 for result in data.get("result", []):
@@ -116,14 +120,22 @@ def telegram_listener():
                             send_custom_message(chat_id, "⚡ *ARC Mainnet Monitoring Sentinel is Online!*\n\nSend /status to check node statuses.")
                         elif text.startswith("/status"):
                             send_custom_message(chat_id, get_status_report())
-        except Exception:
+            else:
+                log_msg(f"[TG] API Conflict or Error: HTTP {resp.status_code}")
+        except Exception as e:
             time.sleep(2)
         time.sleep(1)
 
-# Start threads independently
-threading.Thread(target=monitor_worker, daemon=True).start()
-threading.Thread(target=telegram_listener, daemon=True).start()
-log_msg("Booting background threads directly...")
+# === BULLETPROOF SINGLETON LOCK ===
+# Prevents duplicate bots from fighting each other when Gunicorn spawns multiple workers.
+try:
+    worker_lock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    worker_lock.bind(("127.0.0.1", 11223))
+    log_msg("Master worker lock acquired. Booting threads...")
+    threading.Thread(target=monitor_worker, daemon=True).start()
+    threading.Thread(target=telegram_listener, daemon=True).start()
+except socket.error:
+    log_msg("Secondary worker detected. Skipping thread spawn.")
 
 @app.route("/")
 def index():
@@ -175,9 +187,11 @@ def index():
 
 @app.route("/api/data")
 def api_data():
+    with logs_lock:
+        current_logs = list(logs_list)
     return jsonify({
         "nodes": global_node_data,
-        "logs": list(logs_list)
+        "logs": current_logs
     })
 
 if __name__ == "__main__":
